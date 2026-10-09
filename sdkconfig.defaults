@@ -24,6 +24,12 @@ CONFIG_LV_COLOR_DEPTH_16=y
 CONFIG_LV_DEF_REFR_PERIOD=20
 CONFIG_LV_FONT_MONTSERRAT_14=y
 CONFIG_LV_FONT_MONTSERRAT_20=y
+# 压缩字形的解压器。assets/fonts/generated 下的 5 个字体都由 lv_font_conv 以
+# --bpp 4 生成，即 font_dsc.bitmap_format = LV_FONT_FMT_TXT_COMPRESSED。
+# 关掉它不会编译失败，只会让 lv_font_get_bitmap_fmt_txt() 对每个字形返回 NULL：
+# 屏幕上一个字都不显示，而 LVGL 的告警又因 LV_USE_LOG 关闭被编译掉，完全无声。
+# 这里必须为 y，新增压缩字体时也一并检查本项。
+CONFIG_LV_USE_FONT_COMPRESSED=y
 # LVGL 内置 malloc 池大小(KB)。它是独立静态区、不与系统堆共享,配大了会白白占用 RAM。
 # 本 demo UI 简单,24KB 足够;若自建复杂界面出现绘制卡死/看门狗,调大此值。
 CONFIG_LV_MEM_SIZE_KILOBYTES=24

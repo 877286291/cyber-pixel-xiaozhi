@@ -301,6 +301,43 @@ def check_conflict_markers(files: list[Path], errors: list[str]) -> None:
             errors.append(f"{path.relative_to(ROOT)}: unresolved merge conflict marker")
 
 
+def check_generated_fonts(errors: list[str]) -> None:
+    """Keep compressed generated fonts paired with LVGL's glyph decompressor.
+
+    lv_font_get_bitmap_fmt_txt() returns NULL for every glyph of a compressed
+    font when LV_USE_FONT_COMPRESSED is off. That failure is invisible at build
+    time and nearly invisible at runtime: rectangles and canvas drawing still
+    work, so the screen looks alive with no text at all, and LVGL's own warning
+    is compiled out along with LV_USE_LOG. Hence a deterministic check here
+    instead of relying on someone noticing blank labels.
+
+    bitmap_format 0 is LV_FONT_FMT_TXT_PLAIN (no decompressor needed);
+    1 and 2 are the compressed variants.
+    """
+    font_dir = ROOT / "assets" / "fonts" / "generated"
+    fonts = sorted(font_dir.glob("*.c"))
+    if not fonts:
+        errors.append(f"missing generated font sources: {font_dir.relative_to(ROOT)}/*.c")
+        return
+
+    format_re = re.compile(r"\.bitmap_format\s*=\s*(\d+)")
+    compressed = [
+        path.name
+        for path in fonts
+        if (match := format_re.search(path.read_text(encoding="utf-8")))
+        and match.group(1) != "0"
+    ]
+    if not compressed:
+        return
+
+    defaults = (ROOT / "sdkconfig.defaults").read_text(encoding="utf-8")
+    if not re.search(r"(?m)^CONFIG_LV_USE_FONT_COMPRESSED=y\s*$", defaults):
+        errors.append(
+            "sdkconfig.defaults must set CONFIG_LV_USE_FONT_COMPRESSED=y because these "
+            f"generated fonts store compressed glyphs: {', '.join(compressed)}"
+        )
+
+
 def main() -> int:
     errors: list[str] = []
     vendored_roots = vendored_document_roots(errors)
@@ -313,6 +350,7 @@ def main() -> int:
     check_issue_forms(errors)
     check_sensitive_content(files, errors)
     check_conflict_markers(files, errors)
+    check_generated_fonts(errors)
 
     if errors:
         for error in errors:

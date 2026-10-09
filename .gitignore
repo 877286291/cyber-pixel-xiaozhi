@@ -14,6 +14,9 @@ build_ota_log.txt
 val_static.log
 assets/fonts/npx_probe.log
 
+# 运行仓库检查（tools/*.py）产生的字节码缓存。
+__pycache__/
+
 # Generated repository-local links; canonical skill sources live in skills/.
 /.agents/skills/passport-develop
 /.agents/skills/passport-setup

@@ -166,6 +166,7 @@ class VendoredDocumentationTest(unittest.TestCase):
             patch.object(CHECKS, "check_required_files"),
             patch.object(CHECKS, "check_action_pins"),
             patch.object(CHECKS, "check_issue_forms"),
+            patch.object(CHECKS, "check_generated_fonts"),
             contextlib.redirect_stderr(io.StringIO()) as output,
         ):
             self.assertEqual(CHECKS.text_files(), files)
@@ -331,10 +332,63 @@ class CommunityDocumentLinksTest(unittest.TestCase):
             patch.object(CHECKS, "check_required_files"),
             patch.object(CHECKS, "check_action_pins"),
             patch.object(CHECKS, "check_issue_forms"),
+            patch.object(CHECKS, "check_generated_fonts"),
             contextlib.redirect_stderr(io.StringIO()) as output,
         ):
             self.assertEqual(CHECKS.main(), 1)
         self.assertIn("language switch must use a Markdown link", output.getvalue())
+
+
+class GeneratedFontsTest(unittest.TestCase):
+    """check_generated_fonts must fail closed when compressed fonts lack the decoder."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="ai-passport-font-tests-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        root_patch = patch.object(CHECKS, "ROOT", self.root)
+        root_patch.start()
+        self.addCleanup(root_patch.stop)
+        self.fonts = self.root / "assets" / "fonts" / "generated"
+        self.fonts.mkdir(parents=True)
+
+    def font(self, name: str, bitmap_format: int) -> None:
+        (self.fonts / name).write_text(
+            f"const lv_font_t x = {{\n    .bitmap_format = {bitmap_format},\n}};\n",
+            encoding="utf-8",
+        )
+
+    def defaults(self, content: str) -> None:
+        (self.root / "sdkconfig.defaults").write_text(content, encoding="utf-8")
+
+    def errors(self) -> list[str]:
+        errors: list[str] = []
+        CHECKS.check_generated_fonts(errors)
+        return errors
+
+    def test_missing_generated_fonts_fail_closed(self) -> None:
+        self.defaults("CONFIG_LV_USE_FONT_COMPRESSED=y\n")
+        errors = self.errors()
+        self.assertEqual(len(errors), 1)
+        self.assertIn("missing generated font sources", errors[0])
+
+    def test_compressed_font_without_decoder_is_rejected(self) -> None:
+        self.font("cyber_font_code.c", 1)
+        self.defaults("# CONFIG_LV_USE_FONT_COMPRESSED is not set\n")
+        errors = self.errors()
+        self.assertEqual(len(errors), 1)
+        self.assertIn("CONFIG_LV_USE_FONT_COMPRESSED=y", errors[0])
+        self.assertIn("cyber_font_code.c", errors[0])
+
+    def test_compressed_font_with_decoder_passes(self) -> None:
+        self.font("cyber_font_code.c", 1)
+        self.defaults("CONFIG_LV_USE_FONT_COMPRESSED=y\n")
+        self.assertEqual(self.errors(), [])
+
+    def test_plain_font_does_not_require_decoder(self) -> None:
+        self.font("cyber_font_code.c", 0)
+        self.defaults("# CONFIG_LV_USE_FONT_COMPRESSED is not set\n")
+        self.assertEqual(self.errors(), [])
 
 
 if __name__ == "__main__":
