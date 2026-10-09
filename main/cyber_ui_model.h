@@ -106,6 +106,31 @@ typedef enum {
     CYBER_IDLE_OFF,           // 背光全灭
 } cyber_idle_t;
 
+// 开机页的放行方式。
+//
+// HOLD 是为了消除一次观感错误：设备重启后"是否已绑定"要等首个 OTA 响应才知道，
+// 而 NVS 里的旧结论（paired）会让界面先跳到主界面，几秒后再被激活页顶掉。
+// 用户看到的是"机甲脸闪一下然后跳到配对码"，像是设备出错了。
+// HOLD 让开机动画一直演到有结论为止，之后直接落到正确的那一屏。
+typedef enum {
+    CYBER_BOOT_GATE_AUTO = 0,  // 播完 CYBER_BOOT_MS 自动进下一屏（默认，宿主单测沿用）
+    CYBER_BOOT_GATE_HOLD,      // 停在开机页等外部放行；最长 CYBER_BOOT_HOLD_MAX_MS
+} cyber_boot_gate_t;
+
+// 开机页进度条的数据源：只描述【本次启动的链路走到哪一步】。
+//
+// 刻意不含 NVS 里的旧绑定结论：进度条要反映的是这次真实完成了什么，而不是上一轮
+// 存下的状态——否则一台"曾绑定过"的设备一上电就会把进度顶到满，等于撒谎。
+// 映射由 main.c 从 cyber_ota_state_t 换算（那是唯一同时看得到两边的地方）。
+typedef enum {
+    CYBER_BOOT_LINK_IDLE = 0,  // 尚未联网
+    CYBER_BOOT_LINK_NET,       // 已联网，等激活客户端发问
+    CYBER_BOOT_LINK_CHECKING,  // 检查请求在途
+    CYBER_BOOT_LINK_DONE,      // 已拿到结论（随后切屏）
+    CYBER_BOOT_LINK_OFFLINE,   // 连不上服务端（随后切屏）
+    CYBER_BOOT_LINK_COUNT,
+} cyber_boot_link_t;
+
 // 占位字幕缓冲：阶段 1 放本地 mock 短句，阶段 2 放服务器 LLM/TTS 文本。
 #define CYBER_SUBTITLE_MAX 96
 
@@ -134,6 +159,10 @@ typedef struct {
     cyber_pair_state_t pair;     // 配对流程状态（CYBER_PAIR_OFF = 未启用）
     char pair_code[CYBER_PAIR_CODE_LEN + 1];  // 仅 WAITING 时有 6 位数字；否则为 ""
 
+    cyber_boot_gate_t boot_gate; // 开机页是否要等首个 OTA 结果再放行
+    cyber_boot_link_t boot_link; // 开机页进度条的链路阶段（由 main.c 从 OTA 状态映射）
+    uint8_t boot_pct;            // 开机页当前进度 0..100，只增不减
+
     char subtitle[CYBER_SUBTITLE_MAX + 1];
 } cyber_ui_model_t;
 
@@ -158,6 +187,24 @@ void cyber_model_set_net(cyber_ui_model_t *m, bool connected);
 // 模型不再重复判断：外部输入在入口处验一次，比每个消费方各验一次更不容易漂移。
 void cyber_model_set_pair(cyber_ui_model_t *m, cyber_pair_state_t state,
                           const char *code);
+
+// 设置开机页放行方式。默认 CYBER_BOOT_GATE_AUTO（播完就走），
+// 联网设备在启动时设为 CYBER_BOOT_GATE_HOLD，等 main.c 拿到首个 OTA 结果后放行。
+// 置回 AUTO 是幂等的：放行之后本函数可以随便重复调用。
+void cyber_model_set_boot_gate(cyber_ui_model_t *m, cyber_boot_gate_t gate);
+
+// 设置开机页进度条的链路阶段。main.c 每个 tick 从 OTA 状态映射后写入。
+void cyber_model_set_boot_link(cyber_ui_model_t *m, cyber_boot_link_t link);
+
+// 开机页进度条应显示的百分比（0..100），读的是模型里"只增不减"的 boot_pct。
+uint8_t cyber_boot_meter(const cyber_ui_model_t *m);
+
+// 链路阶段的短标签（开机页底部提示条用）。
+const char *cyber_boot_link_label(cyber_boot_link_t link);
+
+// 开机动画已播完、正在等首个 OTA 结果。渲染层据此切换"100% 卡住"的观感，
+// 否则一块不动的画面会被用户当成死机。
+bool cyber_boot_waiting(const cyber_ui_model_t *m);
 
 // 阶段 2 接口：把小智下行事件灌进状态机。text 可为 NULL（非说话态）。
 // 阶段 1 不调用它，但状态机与 UI 已按同一套状态设计，接服务器时无需改渲染。
@@ -192,6 +239,10 @@ uint32_t cyber_pair_color(cyber_pair_state_t s);
 // ---------------------------------------------------------------------------
 // 开机进度 0..100，elapsed >= duration 时恒为 100。
 uint8_t cyber_boot_progress(uint32_t elapsed_ms, uint32_t duration_ms);
+// 等 OTA 期间的开机进度 0..100：自检时间成分只走到 CYBER_BOOT_PCT_SELFTEST，
+// 其余由链路阶段（已联网/检查在途/有结论）抬升。纯函数，便于单测钉住单调性。
+uint8_t cyber_boot_phase_pct(uint32_t elapsed_ms, uint32_t duration_ms,
+                             cyber_boot_link_t link);
 // 已出现的自检行数 0..total（前 70% 时间走完所有行）。
 uint8_t cyber_boot_log_count(uint32_t elapsed_ms, uint32_t duration_ms, uint8_t total);
 // 开机信号抖动是否处于激活窗口（开头一段 + 70% 处瞬时一次）。

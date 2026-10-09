@@ -255,7 +255,11 @@ static const char *hint_for(const cyber_ui_model_t *m)
 {
     switch (m->screen) {
     case CYBER_SCREEN_BOOT:
-        return "SYSTEM BOOT";
+        // 等首个 OTA 结果时底部要写清"在等哪一步"：进度条会按真实阶段停留几秒，
+        // 一句说明比写死 SYSTEM BOOT 更能让人确信设备在干活。文案上限受
+        // CYBER_HINT_W 约束（sm 字体 7px/字符，208px ≈ 28 字符）。
+        return cyber_boot_waiting(m) ? cyber_boot_link_label(m->boot_link)
+                                     : "SYSTEM BOOT";
     case CYBER_SCREEN_ACTIVATION:
         // 有码时提示用户去哪儿输；没码时不做无意义的指引——这时真正的问题是链路。
         // 文案长度上限受 CYBER_HINT_W 约束（sm 字体 7px/字符，208px ≈ 28 字符）。
@@ -546,10 +550,12 @@ void cyber_ui_apply(cyber_ui_t *ui, const cyber_ui_model_t *m)
 
     // --- 开机页 ---
     if (m->screen == CYBER_SCREEN_BOOT && ui->boot_page != NULL) {
-        const uint8_t progress = cyber_boot_progress(m->screen_ms, CYBER_BOOT_MS);
+        // 进度只增不减，且不再靠"呼吸"来回动：抖动/回缩恰恰是这次要消除的观感。
+        // 进度读的是模型里锁存过的 boot_pct，它在等待期由真实链路阶段抬升。
+        const uint8_t progress = cyber_boot_meter(m);
         if (first || progress != ui->applied.boot_progress) {
             lv_obj_set_width(ui->boot_bar_fill,
-                             CYBER_BOOT_BAR_INNER_W * progress / 100);
+                             CYBER_BOOT_BAR_INNER_W * progress / 100u);
             lv_label_set_text_fmt(ui->boot_pct, "%u%%", (unsigned)progress);
             ui->applied.boot_progress = progress;
         }

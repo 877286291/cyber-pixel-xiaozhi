@@ -685,6 +685,147 @@ static void test_activation_gate_on_boot(void)
     assert(m.screen == CYBER_SCREEN_ACTIVATION);
 }
 
+// 开机页把守：等首个 OTA 结果，避免"先闪一帧主界面再被激活页顶掉"。
+static void test_boot_gate_holds_for_ota(void)
+{
+    cyber_ui_model_t m;
+
+    // 默认档位就是 AUTO：不设闸时行为不变（宿主单测与阶段 1 依赖这一点）。
+    cyber_model_init(&m);
+    assert(m.boot_gate == CYBER_BOOT_GATE_AUTO);
+    assert(!cyber_boot_waiting(&m));
+
+    // HOLD：动画时长走完也不放行，而是停在开机页。
+    cyber_model_init(&m);
+    cyber_model_set_boot_gate(&m, CYBER_BOOT_GATE_HOLD);
+    advance(&m, CYBER_BOOT_MS, 40);
+    assert(m.screen == CYBER_SCREEN_BOOT);
+    assert(cyber_boot_waiting(&m));   // 渲染层据此把 100% 换成"等待中"
+
+    // 等 OTA 期间按钮一律无效（与 AUTO 档位一致），不能被打断。
+    cyber_model_tick(&m, 200);
+    assert(cyber_model_button(&m, CYBER_BTN_OK, CYBER_BTN_EV_CLICK) == CYBER_ACT_NONE);
+    assert(m.screen == CYBER_SCREEN_BOOT);
+
+    // 拿到结论后放行：此时 pair 已经是 WAITING，直接落到激活页，
+    // 中间不会出现一帧主界面。
+    cyber_model_set_pair(&m, CYBER_PAIR_WAITING, "663840");
+    cyber_model_set_boot_gate(&m, CYBER_BOOT_GATE_AUTO);
+    assert(!cyber_boot_waiting(&m));
+    cyber_model_tick(&m, 40);
+    assert(m.screen == CYBER_SCREEN_ACTIVATION);
+    assert(strcmp(m.pair_code, "663840") == 0);
+
+    // 结论是"已绑定"时同样直接落到主界面。
+    cyber_model_init(&m);
+    cyber_model_set_boot_gate(&m, CYBER_BOOT_GATE_HOLD);
+    advance(&m, CYBER_BOOT_MS, 40);
+    assert(m.screen == CYBER_SCREEN_BOOT);
+    cyber_model_set_pair(&m, CYBER_PAIR_READY, NULL);
+    cyber_model_set_boot_gate(&m, CYBER_BOOT_GATE_AUTO);
+    cyber_model_tick(&m, 40);
+    assert(m.screen == CYBER_SCREEN_HOME);
+}
+
+static void test_boot_meter_is_monotonic(void)
+{
+    cyber_ui_model_t m;
+
+    // 纯函数：时间成分只走到 SELFTEST，余下必须由链路阶段挣来。
+    assert(cyber_boot_phase_pct(0, CYBER_BOOT_MS, CYBER_BOOT_LINK_IDLE) == 0);
+    assert(cyber_boot_phase_pct(CYBER_BOOT_MS, CYBER_BOOT_MS, CYBER_BOOT_LINK_IDLE) ==
+           CYBER_BOOT_PCT_SELFTEST);
+    // 已联网 / 检查在途 / 有结论，逐档抬升且互不相同。
+    assert(cyber_boot_phase_pct(CYBER_BOOT_MS, CYBER_BOOT_MS, CYBER_BOOT_LINK_NET) ==
+           CYBER_BOOT_PCT_NET);
+    assert(cyber_boot_phase_pct(CYBER_BOOT_MS, CYBER_BOOT_MS, CYBER_BOOT_LINK_CHECKING) ==
+           CYBER_BOOT_PCT_CHECK);
+    assert(cyber_boot_phase_pct(CYBER_BOOT_MS, CYBER_BOOT_MS, CYBER_BOOT_LINK_DONE) ==
+           CYBER_BOOT_PCT_DONE);
+    assert(CYBER_BOOT_PCT_SELFTEST < CYBER_BOOT_PCT_NET);
+    assert(CYBER_BOOT_PCT_NET < CYBER_BOOT_PCT_CHECK);
+    assert(CYBER_BOOT_PCT_CHECK < CYBER_BOOT_PCT_DONE);
+    // 任何档位都不得显示 100：停在 100 会被当成死机。
+    for (int s = 0; s < CYBER_BOOT_LINK_COUNT; s++) {
+        assert(cyber_boot_phase_pct(CYBER_BOOT_MS * 3, CYBER_BOOT_MS,
+                                    (cyber_boot_link_t)s) < 100);
+    }
+    // 时间还没走满时，阶段只能抬高、绝不能压低。
+    assert(cyber_boot_phase_pct(0, CYBER_BOOT_MS, CYBER_BOOT_LINK_DONE) ==
+           CYBER_BOOT_PCT_DONE);
+
+    // 模型层面：boot_pct 只增不减，即使链路阶段因丢网回退也不回缩。
+    cyber_model_init(&m);
+    cyber_model_set_boot_gate(&m, CYBER_BOOT_GATE_HOLD);
+    assert(cyber_boot_meter(&m) == 0);
+    cyber_model_set_boot_link(&m, CYBER_BOOT_LINK_CHECKING);
+    advance(&m, CYBER_BOOT_MS, 40);
+    const uint8_t high = cyber_boot_meter(&m);
+    assert(high == CYBER_BOOT_PCT_CHECK);
+    // 丢网：阶段退到 OFFLINE，进度条不得跟着退。
+    cyber_model_set_boot_link(&m, CYBER_BOOT_LINK_OFFLINE);
+    advance(&m, 40, 40);
+    assert(cyber_boot_meter(&m) >= high);
+
+    // 旧绑定结论不参与进度：pair=READY 不会把条顶满（那正是"撒谎"的进度）。
+    cyber_model_init(&m);
+    cyber_model_set_boot_gate(&m, CYBER_BOOT_GATE_HOLD);
+    cyber_model_set_pair(&m, CYBER_PAIR_READY, NULL);
+    advance(&m, 40, 40);
+    assert(cyber_boot_meter(&m) <= CYBER_BOOT_PCT_SELFTEST);
+
+    // AUTO 档位沿用纯时间进度，行为与阶段 1 一致（走满时长前一直爬升）。
+    cyber_model_init(&m);
+    advance(&m, CYBER_BOOT_MS / 2, 40);
+    const uint8_t mid = cyber_boot_meter(&m);
+    assert(mid >= 45 && mid <= 55);
+
+    // 越界入参与空指针的边界。
+    cyber_model_set_boot_link(&m, (cyber_boot_link_t)99);
+    assert(m.boot_link == CYBER_BOOT_LINK_IDLE);
+    cyber_model_set_boot_link(NULL, CYBER_BOOT_LINK_NET);
+    assert(cyber_boot_meter(NULL) == 0);
+    assert(strcmp(cyber_boot_link_label(CYBER_BOOT_LINK_CHECKING),
+                  "CHECKING ACTIVATION") == 0);
+    assert(strcmp(cyber_boot_link_label((cyber_boot_link_t)99),
+                  "WAITING FOR NETWORK") == 0);
+}
+
+static void test_boot_gate_has_timeout(void)
+{
+    cyber_ui_model_t m;
+    cyber_model_init(&m);
+    cyber_model_set_boot_gate(&m, CYBER_BOOT_GATE_HOLD);
+
+    // 兜底超时之前必须还停在开机页：没网或服务端不响应时，这道闸不能提前松手，
+    // 否则又会回到"先闪主界面"的老问题。
+    advance(&m, CYBER_BOOT_HOLD_MAX_MS - 40, 40);
+    assert(m.screen == CYBER_SCREEN_BOOT);
+    assert(cyber_boot_waiting(&m));
+
+    // 超时后必须自己放行，而且直接把档位翻回 AUTO（幂等，不必外部再调一次）。
+    advance(&m, 40, 40);
+    assert(m.screen != CYBER_SCREEN_BOOT);
+    assert(m.boot_gate == CYBER_BOOT_GATE_AUTO);
+    assert(!cyber_boot_waiting(&m));
+
+    // 没联网时落到激活页而不是主界面：连不上服务端的设备不该摆出一张正常的脸。
+    cyber_model_init(&m);
+    cyber_model_set_boot_gate(&m, CYBER_BOOT_GATE_HOLD);
+    cyber_model_set_pair(&m, CYBER_PAIR_OFFLINE, NULL);
+    advance(&m, CYBER_BOOT_HOLD_MAX_MS, 40);
+    assert(m.screen == CYBER_SCREEN_ACTIVATION);
+
+    // 越界档位一律当作放行，不能因为一个坏参数把界面永远钉在开机页。
+    cyber_model_init(&m);
+    cyber_model_set_boot_gate(&m, (cyber_boot_gate_t)99);
+    assert(m.boot_gate == CYBER_BOOT_GATE_AUTO);
+
+    // 空指针与派生查询的边界。
+    cyber_model_set_boot_gate(NULL, CYBER_BOOT_GATE_HOLD);
+    assert(!cyber_boot_waiting(NULL));
+}
+
 static void test_activation_blocks_interaction(void)
 {
     cyber_ui_model_t m;
@@ -784,6 +925,45 @@ static void test_test_only_reaches_home(void)
     assert(cyber_model_button(&m, CYBER_BTN_OK, CYBER_BTN_EV_CLICK) == CYBER_ACT_START_LISTEN);
 }
 
+// 回归（本机实测症状）：用户在控制台解绑后，服务端重新下发激活码，设备必须从
+// 主界面回到激活页。早期只实现了"激活页→主界面"的单向迁移，设备停在最后已知
+// 的"已绑定"状态上，屏幕看起来正常但实际要求激活——用户以为设备坏了。
+static void test_home_returns_to_activation_after_unbind(void)
+{
+    cyber_ui_model_t m;
+    cyber_model_init(&m);
+    // 已绑定：正常开机进主界面。
+    cyber_model_set_pair(&m, CYBER_PAIR_READY, NULL);
+    advance(&m, CYBER_BOOT_MS, 40);
+    assert(m.screen == CYBER_SCREEN_HOME);
+
+    // 用户在控制台解绑，服务端下一轮要求激活。
+    cyber_model_set_pair(&m, CYBER_PAIR_WAITING, "663840");
+    cyber_model_tick(&m, 40);
+    assert(m.screen == CYBER_SCREEN_ACTIVATION);
+    assert(strcmp(m.pair_code, "663840") == 0);
+
+    // 重绑完成：回到主界面，语音通道可用。
+    cyber_model_set_pair(&m, CYBER_PAIR_READY, NULL);
+    cyber_model_tick(&m, 40);
+    assert(m.screen == CYBER_SCREEN_HOME);
+    assert(cyber_model_button(&m, CYBER_BTN_OK, CYBER_BTN_EV_CLICK) == CYBER_ACT_START_LISTEN);
+
+    // 语音流程进行中的迁移由语音页自己的超时/打断收尾，回到主界面后再做
+    // 激活页迁移；这里长按 OK 退出语音，还原成"停在主界面"的常态。
+    assert(cyber_model_button(&m, CYBER_BTN_OK, CYBER_BTN_EV_LONG) == CYBER_ACT_ABORT);
+    assert(m.screen == CYBER_SCREEN_HOME);
+
+    // 解绑→重绑可以反复进行，迁移必须每次双向都成立。
+    cyber_model_set_pair(&m, CYBER_PAIR_WAITING, "111222");
+    cyber_model_tick(&m, 40);
+    assert(m.screen == CYBER_SCREEN_ACTIVATION);
+    cyber_model_set_pair(&m, CYBER_PAIR_READY, NULL);
+    cyber_model_tick(&m, 40);
+    assert(m.screen == CYBER_SCREEN_HOME);
+}
+
+
 int main(void)
 {
     test_init_defaults();
@@ -815,10 +995,14 @@ int main(void)
     test_pair_setter();
     test_pair_split_code();
     test_activation_gate_on_boot();
+    test_boot_gate_holds_for_ota();
+    test_boot_meter_is_monotonic();
+    test_boot_gate_has_timeout();
     test_activation_blocks_interaction();
     test_activation_releases_to_home();
     test_activation_returning_from_offline();
     test_test_only_reaches_home();
+    test_home_returns_to_activation_after_unbind();
 
     printf("test_cyber_ui_model: PASS\n");
     return 0;

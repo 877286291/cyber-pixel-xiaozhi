@@ -149,6 +149,11 @@ void cyber_model_init(cyber_ui_model_t *m)
     // 它只由 main.c 显式打开（见 cyber_model_set_pair）。
     m->pair = CYBER_PAIR_OFF;
     m->pair_code[0] = '\0';
+    // 开机页默认到点就走：宿主单测与阶段 1 的行为完全不变。
+    // 只有真的会去查 OTA 的设备（main.c）才把它改成 HOLD。
+    m->boot_gate = CYBER_BOOT_GATE_AUTO;
+    m->boot_link = CYBER_BOOT_LINK_IDLE;
+    m->boot_pct = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,19 +183,45 @@ cyber_action_t cyber_model_tick(cyber_ui_model_t *m, uint32_t dt_ms)
     }
 
     if (m->screen == CYBER_SCREEN_BOOT) {
+        // 进度条：AUTO 档位沿用原来的纯时间进度；HOLD 档位改按真实链路阶段抬升，
+        // 且只增不减（阶段可能因丢网回退，进度条不能跟着往回缩）。
+        if (m->boot_gate == CYBER_BOOT_GATE_HOLD) {
+            const uint8_t pct = cyber_boot_phase_pct(m->screen_ms, CYBER_BOOT_MS,
+                                                     m->boot_link);
+            if (pct > m->boot_pct) m->boot_pct = pct;
+        } else {
+            m->boot_pct = cyber_boot_progress(m->screen_ms, CYBER_BOOT_MS);
+        }
         // 开机动画本身很短，播完自动进下一屏；期间不响应按键（见 cyber_model_button）。
         // 未绑定就走激活页：把配对码藏在一个"看起来正常"的主界面后面，
         // 用户只会以为设备坏了。
-        if (m->screen_ms >= CYBER_BOOT_MS) {
+        //
+        // HOLD 档位下多等一会儿：首个 OTA 结果出来前，"是否已绑定"只有 NVS 里的
+        // 旧结论，据此进主界面会在几秒后被激活页顶掉。兜底超时保证没网或服务端
+        // 不响应时不会永远停在开机页。
+        if (m->boot_gate == CYBER_BOOT_GATE_HOLD &&
+            m->screen_ms >= CYBER_BOOT_HOLD_MAX_MS) {
+            m->boot_gate = CYBER_BOOT_GATE_AUTO;
+        }
+        if (m->screen_ms >= CYBER_BOOT_MS && m->boot_gate == CYBER_BOOT_GATE_AUTO) {
             enter_screen(m, cyber_pair_blocks_ui(m->pair) ? CYBER_SCREEN_ACTIVATION
                                                           : CYBER_SCREEN_HOME);
         }
         return CYBER_ACT_NONE;
     }
 
+    // 主界面与激活页之间的迁移必须是双向的："绑定已生效"和"服务端现在要求
+    // 激活"都可能在任意时刻到来，哪边来就该切哪边。反方向不是可有可无的：
+    // 用户在控制台解绑后，服务端会重新下发激活码，设备必须回到激活页等用户
+    // 重输码。若只实现"激活页→主界面"，设备会永远停留在它最后知道的那个
+    // "已绑定"状态上，用户看到一个看起来正常的画面，实际需要激活。
     if (m->screen == CYBER_SCREEN_ACTIVATION) {
         // 绑定一旦生效就自动放行到主界面：用户在控制台输完码，屏幕上不该再需要任何操作。
         if (!cyber_pair_blocks_ui(m->pair)) enter_screen(m, CYBER_SCREEN_HOME);
+        return CYBER_ACT_NONE;
+    }
+    if (m->screen == CYBER_SCREEN_HOME && m->voice == CYBER_VOICE_IDLE) {
+        if (cyber_pair_blocks_ui(m->pair)) enter_screen(m, CYBER_SCREEN_ACTIVATION);
         return CYBER_ACT_NONE;
     }
 
@@ -363,6 +394,46 @@ void cyber_model_set_pair(cyber_ui_model_t *m, cyber_pair_state_t state,
     copy_text(m->pair_code, sizeof(m->pair_code), code);
 }
 
+void cyber_model_set_boot_gate(cyber_ui_model_t *m, cyber_boot_gate_t gate)
+{
+    if (m == NULL) return;
+    // 只认两个合法值；越界一律当作放行，免得一个坏参数把界面永远钉在开机页。
+    m->boot_gate = (gate == CYBER_BOOT_GATE_HOLD) ? CYBER_BOOT_GATE_HOLD
+                                                  : CYBER_BOOT_GATE_AUTO;
+}
+
+void cyber_model_set_boot_link(cyber_ui_model_t *m, cyber_boot_link_t link)
+{
+    if (m == NULL) return;
+    // 越界一律当"还没联网"：宁可少画一点进度，也不要越界取标签。
+    m->boot_link = (link < CYBER_BOOT_LINK_COUNT) ? link : CYBER_BOOT_LINK_IDLE;
+}
+
+uint8_t cyber_boot_meter(const cyber_ui_model_t *m)
+{
+    return (m == NULL) ? 0u : m->boot_pct;
+}
+
+const char *cyber_boot_link_label(cyber_boot_link_t link)
+{
+    switch (link) {
+    case CYBER_BOOT_LINK_NET:      return "WAITING FOR SERVICE";
+    case CYBER_BOOT_LINK_CHECKING: return "CHECKING ACTIVATION";
+    case CYBER_BOOT_LINK_DONE:     return "LINK READY";
+    case CYBER_BOOT_LINK_OFFLINE:  return "NO SERVER LINK";
+    case CYBER_BOOT_LINK_IDLE:
+    default:                       return "WAITING FOR NETWORK";
+    }
+}
+
+bool cyber_boot_waiting(const cyber_ui_model_t *m)
+{
+    if (m == NULL) return false;
+    return m->screen == CYBER_SCREEN_BOOT &&
+           m->boot_gate == CYBER_BOOT_GATE_HOLD &&
+           m->screen_ms >= CYBER_BOOT_MS;
+}
+
 void cyber_model_voice_event(cyber_ui_model_t *m, cyber_voice_state_t state,
                              cyber_emotion_t emo, const char *text)
 {
@@ -473,6 +544,29 @@ uint8_t cyber_boot_progress(uint32_t elapsed_ms, uint32_t duration_ms)
     if (duration_ms == 0u || elapsed_ms >= duration_ms) return 100u;
     // 先扩到 64 位再乘，避免 elapsed 较大时 32 位溢出。
     return (uint8_t)(((uint64_t)elapsed_ms * 100u) / duration_ms);
+}
+
+uint8_t cyber_boot_phase_pct(uint32_t elapsed_ms, uint32_t duration_ms,
+                             cyber_boot_link_t link)
+{
+    // 自检动画只走到 SELFTEST，不再自己冲到 100：余下的进度必须由真实阶段挣来。
+    // 否则等待期间进度已满，只能靠来回动证明"没死"，那正是要消除的反复横跳。
+    uint32_t pct = (uint32_t)cyber_boot_progress(elapsed_ms, duration_ms) *
+                   CYBER_BOOT_PCT_SELFTEST / 100u;
+    if (pct > CYBER_BOOT_PCT_SELFTEST) pct = CYBER_BOOT_PCT_SELFTEST;
+
+    uint32_t floor = 0u;
+    switch (link) {
+    case CYBER_BOOT_LINK_NET:      floor = CYBER_BOOT_PCT_NET;   break;
+    case CYBER_BOOT_LINK_CHECKING: floor = CYBER_BOOT_PCT_CHECK; break;
+    case CYBER_BOOT_LINK_DONE:     floor = CYBER_BOOT_PCT_DONE;  break;
+    // OFFLINE 不给下限：链路是"没打通"，不该伪装成接近完成。进度靠调用方
+    // （tick 里的 max 锁存）保持只增不减，超时后即为开机页最后一帧。
+    case CYBER_BOOT_LINK_OFFLINE:
+    case CYBER_BOOT_LINK_IDLE:
+    default:                       break;
+    }
+    return (uint8_t)((pct > floor) ? pct : floor);
 }
 
 uint8_t cyber_boot_log_count(uint32_t elapsed_ms, uint32_t duration_ms, uint8_t total)

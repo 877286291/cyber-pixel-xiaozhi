@@ -72,6 +72,23 @@ _Static_assert(CYBER_PAIR_CODE_ROW * 2 == CYBER_PAIR_CODE_LEN,
 #define CYBER_BOOT_MS          2600  // 开机动画总时长，之后自动进主界面
 #define CYBER_BOOT_GLITCH_MS    420  // 开头信号不稳的时长
 #define CYBER_BOOT_LOG_LINES      4  // 开机自检行数
+// 开机页把守上限：等待首个 OTA 结果时最多额外停留这么久。
+// 没有它，断网或服务端不响应就会让设备永远停在开机自检画面上。
+#define CYBER_BOOT_HOLD_MAX_MS  12000
+
+// 开机页进度条的里程碑刻度（%）。
+// 等待首个 OTA 结果期间，进度不能再按时间硬凑：时间进度到点就满，之后只能靠
+// "呼吸"来回动，看起来正是进度条在反复横跳。这里改成按【本次启动真实走过的阶段】
+// 抬升——自检动画 → 已联网 → 检查在途 → 拿到结论，且只增不减。
+// 刻度一律不取 100：进度一旦显示 100 就该切屏，停在 100 只会被当成死机。
+#define CYBER_BOOT_PCT_SELFTEST  45  // 自检动画播完时的上限
+#define CYBER_BOOT_PCT_NET       62  // Wi-Fi 已拿到地址
+#define CYBER_BOOT_PCT_CHECK     80  // 激活检查请求在途
+#define CYBER_BOOT_PCT_DONE      96  // 已拿到结论，本 tick 内即切屏
+// 等待首个 OTA 结果时，Wi-Fi 仍没上来的宽限时间。超过它就别再等 OTA 了：
+// 没有链路就没有结果可等，早点把 OFFLINE 摆到激活页上比空转的开机页诚实。
+// 实测 Wi-Fi 拿到 IP 约 1.9s，4s 已经是很宽松的上限。
+#define CYBER_BOOT_NET_GRACE_MS  4000
 
 #define CYBER_LISTEN_TIMEOUT_MS 6000  // 聆听自动收尾（阶段 1 占位；联网后由服务器决定）
 #define CYBER_THINK_TIMEOUT_MS  1400  // 思考最短展示时长
