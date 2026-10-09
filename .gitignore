@@ -5,6 +5,15 @@ managed_components/
 .vscode/
 .idea/
 
+# 开发期 Wi-Fi 凭证覆盖头：绝不入库（模板见 main/cyber_wifi_dev.h.example）。
+main/cyber_wifi_dev.h
+
+# 开发期现场日志：含 SSID、MAC、堆水位等信息，绝不入库。
+serial_log*.txt
+build_ota_log.txt
+val_static.log
+assets/fonts/npx_probe.log
+
 # Generated repository-local links; canonical skill sources live in skills/.
 /.agents/skills/passport-develop
 /.agents/skills/passport-setup
