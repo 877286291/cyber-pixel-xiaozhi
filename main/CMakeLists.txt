@@ -13,9 +13,10 @@ set(CYBER_FONT_DIR "${CMAKE_CURRENT_LIST_DIR}/../assets/fonts/generated")
 #   cyber_net       Wi-Fi STA lifecycle: connect, retry, report state
 #   cyber_ota_util  pure activation rules: code check, poll pacing, body builder
 #   cyber_ota       activation client: HTTPS check, JSON parse, NVS persistence
+#   cyber_ws_util   pure conversation rules: control messages, session state machine
 # The upstream demo pages stay absent: this application replaces that menu rather
 # than reusing it. Networking is present now, but the audio path is still unwired,
-# so the codec/Opus dependencies are intentionally not registered yet.
+# so the Opus/I2S half of the conversation pipeline is not registered yet.
 # 注意：开发期凭证头（cyber_wifi_dev.h，可选且被 gitignore）刻意【不】在这里做
 # CMake 依赖声明：组件 CMakeLists.txt 会被 ESP-IDF 当脚本再 include 一次以提取依赖，
 # 那一趟里 set_source_files_properties / set_property 都不可用（会报 "not scriptable"）。
@@ -32,6 +33,8 @@ idf_component_register(
          "cyber_net.c"
          "cyber_ota_util.c"
          "cyber_ota.c"
+         "cyber_ws_util.c"
+         "cyber_ws.c"
          "${CYBER_FONT_DIR}/cyber_font_sm.c"
          "${CYBER_FONT_DIR}/cyber_font_md.c"
          "${CYBER_FONT_DIR}/cyber_font_title.c"
@@ -40,6 +43,7 @@ idf_component_register(
     INCLUDE_DIRS "."
     REQUIRES bsp nvs_flash esp_wifi esp_netif esp_event esp_timer
              esp_http_client esp-tls mbedtls json spi_flash
+             esp_websocket_client esp-opus
 )
 
 # lv_font_conv emits either "lvgl.h" or "lvgl/lvgl.h" depending on this macro.

@@ -154,6 +154,9 @@ void cyber_model_init(cyber_ui_model_t *m)
     m->boot_gate = CYBER_BOOT_GATE_AUTO;
     m->boot_link = CYBER_BOOT_LINK_IDLE;
     m->boot_pct = 0;
+    // 默认按本地占位流程走（memset 已清零）。只有真的接上对话通道的设备
+    // （main.c）才把它置位，因此宿主单测与阶段 1 的行为逐拍不变。
+    m->remote_voice = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -237,12 +240,24 @@ cyber_action_t cyber_model_tick(cyber_ui_model_t *m, uint32_t dt_ms)
     case CYBER_VOICE_LISTENING:
         // 阶段 1 用固定上限兜底，避免没有语音输入时卡死在聆听态。
         // 阶段 2 由服务器的 stt/tts 事件结束本态，这个超时仍作为断线兜底。
-        if (m->voice_ms >= CYBER_LISTEN_TIMEOUT_MS) {
+        // 但阶段 2 里 6 秒太短了：服务端一直在正常收音，用户一句稍长的话会被
+        // 本地直接切断。因此联网时【不设】本地上限——结束要么来自用户按键，
+        // 要么来自服务端事件，要么来自链路断开（由 ws 状态映射处理）。
+        if (!m->remote_voice && m->voice_ms >= CYBER_LISTEN_TIMEOUT_MS) {
             enter_voice(m, CYBER_VOICE_THINKING);
             return CYBER_ACT_STOP_LISTEN;
         }
         break;
     case CYBER_VOICE_THINKING:
+        if (m->remote_voice) {
+            // 联网时不伪造回复：回什么由服务端决定。只保留一个很宽的兜底，
+            // 免得对端没响应时永远停在"思考"。
+            if (m->voice_ms >= CYBER_REMOTE_THINK_TIMEOUT_MS) {
+                enter_voice(m, CYBER_VOICE_IDLE);
+                enter_screen(m, CYBER_SCREEN_HOME);
+            }
+            break;
+        }
         if (m->voice_ms >= CYBER_THINK_TIMEOUT_MS) {
             const cyber_mock_reply_t *r = &MOCK_REPLIES[m->mock_index % MOCK_REPLY_COUNT];
             m->mock_index = (uint8_t)((m->mock_index + 1u) % MOCK_REPLY_COUNT);
@@ -250,6 +265,15 @@ cyber_action_t cyber_model_tick(cyber_ui_model_t *m, uint32_t dt_ms)
         }
         break;
     case CYBER_VOICE_SPEAKING:
+        if (m->remote_voice) {
+            // 联网时"说完了"由服务端的 tts stop 决定。按字数估算的停留时间
+            // 对真实语音是错的（中途停顿、多段回复都会被截断），只留兜底。
+            if (m->voice_ms >= CYBER_REMOTE_SPEAK_TIMEOUT_MS) {
+                enter_voice(m, CYBER_VOICE_IDLE);
+                enter_screen(m, CYBER_SCREEN_HOME);
+            }
+            break;
+        }
         if (m->voice_ms >= cyber_speak_duration_ms(strlen(m->subtitle))) {
             enter_voice(m, CYBER_VOICE_IDLE);
             enter_screen(m, CYBER_SCREEN_HOME);
@@ -456,7 +480,30 @@ void cyber_model_voice_event(cyber_ui_model_t *m, cyber_voice_state_t state,
     enter_voice(m, state);
     // 绑定完成前不给语音界面：否则一条下行事件就能绕过激活页，把用户带到一个
     // 注定没有音频通道的页面上。状态本身照样记录，绑定一旦生效即可正常显示。
-    if (!cyber_pair_blocks_ui(m->pair)) enter_screen(m, CYBER_SCREEN_VOICE);
+    if (!cyber_pair_blocks_ui(m->pair)) {
+        // 联网时 IDLE 的含义是"这一轮结束了"，应当退回主界面；留在语音页上等
+        // 一个已经结束的状态，用户看到的是一个没有任何指示的静止画面。
+        // 阶段 1 的占位流程不在此列：它从 SPEAKING 回 IDLE 走的是 tick 分支。
+        if (m->remote_voice && state == CYBER_VOICE_IDLE) {
+            enter_screen(m, CYBER_SCREEN_HOME);
+        } else {
+            enter_screen(m, CYBER_SCREEN_VOICE);
+        }
+    }
+}
+
+void cyber_model_set_remote_voice(cyber_ui_model_t *m, bool remote)
+{
+    if (m == NULL) return;
+    m->remote_voice = remote;
+}
+
+void cyber_model_set_subtitle(cyber_ui_model_t *m, const char *text)
+{
+    if (m == NULL) return;
+    // 与 voice_event 用同一份裁剪规则：字幕是定长字段，长句必须被可靠截断，
+    // 而不是依赖调用方传入的字符串恰好够短。
+    copy_text(m->subtitle, sizeof(m->subtitle), text);
 }
 
 // ---------------------------------------------------------------------------

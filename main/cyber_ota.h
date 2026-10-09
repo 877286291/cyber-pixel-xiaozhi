@@ -58,3 +58,17 @@ void cyber_ota_notify_net(bool connected);
 
 // 读取当前快照。可从任意任务调用（含 LVGL 任务），临界区内完成，不阻塞。
 void cyber_ota_get_snapshot(cyber_ota_snapshot_t *out);
+
+// 读取对话端点配置（握手用）。由本模块持有 NVS 键，避免调用方重复定义字符串键。
+// 任一字段缺失时写入空串。返回 ESP_OK 表示至少 url 非空。
+// 可从任意任务调用。
+esp_err_t cyber_ota_get_ws_config(char *url, size_t url_cap,
+                                  char *token, size_t token_cap);
+
+// 本机 STA MAC（"aa:bb:cc:dd:ee:ff"）。Device-Id 与 OTA 请求体必须同源，
+// 因此由本模块统一提供，避免两处各自取一次而产生漂移。
+esp_err_t cyber_ota_get_device_mac(char *out, size_t cap);
+
+// Client-Id（NVS 中持久化）。对话握手的 Client-Id 头必须与 OTA 请求一致，
+// 服务端靠它认同一台设备；重新生成会丢掉绑定。
+esp_err_t cyber_ota_get_client_id(char *out, size_t cap);

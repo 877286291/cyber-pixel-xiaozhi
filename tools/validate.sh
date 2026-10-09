@@ -44,6 +44,10 @@ run_static_checks() {
         tests/test_cyber_ota_util.c main/cyber_ota_util.c \
         -o "${test_dir}/test_cyber_ota_util"
     "${test_dir}/test_cyber_ota_util"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_cyber_ws_util.c main/cyber_ws_util.c \
+        -o "${test_dir}/test_cyber_ws_util"
+    "${test_dir}/test_cyber_ws_util"
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain -Icomponents/bsp/src \
         tests/test_cyber_ui_layout.c components/bsp/src/bsp_display_rounding.c \
         -o "${test_dir}/test_cyber_ui_layout"

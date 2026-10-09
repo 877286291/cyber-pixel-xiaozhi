@@ -559,3 +559,38 @@ esp_err_t cyber_ota_init(void)
     inited = true;
     return ESP_OK;
 }
+
+// ---------------------------------------------------------------------------
+// 对话端点配置（供 cyber_ws 握手使用）
+// ---------------------------------------------------------------------------
+// 这些键由本模块写（激活响应里解析出来），因此也只有本模块知道它们的拼写。
+// 让 cyber_ws 自己再写一遍 "ws_url"/"ws_token" 就是给键名漂移留了口子。
+esp_err_t cyber_ota_get_ws_config(char *url, size_t url_cap,
+                                  char *token, size_t token_cap)
+{
+    if (url == NULL || token == NULL || url_cap == 0u || token_cap == 0u) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    // 先清空：NVS 里没有值时调用方不会读到上一次循环遗留的旧凭证。
+    url[0] = '\0';
+    token[0] = '\0';
+    nvs_read_str(CYBER_OTA_KEY_WS_URL, url, url_cap);
+    nvs_read_str(CYBER_OTA_KEY_WS_TOKEN, token, token_cap);
+    return (url[0] != '\0') ? ESP_OK : ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t cyber_ota_get_device_mac(char *out, size_t cap)
+{
+    if (out == NULL || cap == 0u) return ESP_ERR_INVALID_ARG;
+    out[0] = '\0';
+    return get_sta_mac(out, cap) ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t cyber_ota_get_client_id(char *out, size_t cap)
+{
+    if (out == NULL || cap == 0u) return ESP_ERR_INVALID_ARG;
+    out[0] = '\0';
+    // 复用同一个生成/持久化路径：握手头与 OTA 请求体必须是同一个 id，
+    // 否则服务端会把同一台设备认成两台。
+    return load_or_create_client_id(out, cap) ? ESP_OK : ESP_FAIL;
+}

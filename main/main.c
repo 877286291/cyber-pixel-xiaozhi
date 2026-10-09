@@ -21,11 +21,13 @@
 #include "cyber_theme.h"
 #include "cyber_ui.h"
 #include "cyber_ui_model.h"
+#include "cyber_ws.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "lvgl.h"
 #include "nvs_flash.h"
+#include <string.h>
 
 static const char *TAG = "cyber";
 
@@ -48,6 +50,12 @@ typedef struct {
     lv_timer_t *tick;
     uint32_t batt_ticks;
     cyber_ota_state_t ota_last_state;   // 仅用于"状态变化时才打日志"
+    // 对话通道。上一拍的会话状态用于识别【迁移】——同一段回复里会反复出现
+    // 相同的 state，只有看到边沿才知道"刚才开始说话"或"这一轮结束了"。
+    cyber_ws_state_t ws_last;
+    cyber_ws_state_t ws_logged;         // 仅用于"状态变化时才打日志"
+    bool talk_enabled;                  // 已下发的启用状态，避免每拍重复投递请求
+    char ws_subtitle[CYBER_WS_SUBTITLE_CAP];  // 上一拍的服务器字幕，用于去重
 } app_ctx_t;
 
 static QueueHandle_t s_btn_queue;
@@ -178,7 +186,10 @@ static bool map_event(bsp_btn_t btn, bsp_btn_ev_t ev,
     return true;
 }
 
-// 执行模型给出的动作。背光直接落 LEDC；语音动作在阶段 1 是占位。
+// 执行模型给出的动作。背光直接落 LEDC；语音动作转成对话通道的请求。
+//
+// 这里只【投递】请求：cyber_ws 的对外接口都是非阻塞的（只写队列），真正的
+// DNS/TLS/发送在它自己的 worker 里完成。LVGL 任务一旦阻塞，界面立刻卡住。
 static void apply_action(app_ctx_t *ctx, cyber_action_t act)
 {
     switch (act) {
@@ -186,12 +197,13 @@ static void apply_action(app_ctx_t *ctx, cyber_action_t act)
         bsp_display_backlight(ctx->model.backlight_percent);
         break;
     case CYBER_ACT_START_LISTEN:
+        cyber_ws_request_listen(true);
+        break;
     case CYBER_ACT_STOP_LISTEN:
+        cyber_ws_request_listen(false);
+        break;
     case CYBER_ACT_ABORT:
-        // 阶段 1：本地占位流程不需要外部动作，这里只留下钩子。
-        // 阶段 2 接入小智协议后在同样三个分支里收发音频/下发 abort，
-        // 状态机与渲染层都不需要改动（见 cyber_ui_model.h 的 voice_event）。
-        ESP_LOGI(TAG, "voice action %d", (int)act);
+        cyber_ws_request_abort();
         break;
     case CYBER_ACT_NONE:
     default:
@@ -269,7 +281,62 @@ static void tick_cb(lv_timer_t *timer)
                  (int)ota.paired);
     }
 
-    // 6) 落到界面（内部只改真正变化的部分）。
+    // 6) 驱动对话通道。
+    //    通道只在"已绑定 + 已联网"时开启：未绑定时没有有效凭证，建连只会得到
+    //    一次必然失败的握手，并把界面推到 ERROR。
+    const bool talk_ok = net && !cyber_pair_blocks_ui(ctx->model.pair) &&
+                         ctx->model.pair != CYBER_PAIR_OFF;
+    if (talk_ok != ctx->talk_enabled) {
+        cyber_ws_set_enabled(talk_ok);
+        ctx->talk_enabled = talk_ok;
+        ESP_LOGI(TAG, "对话通道 %s", talk_ok ? "开启" : "关闭");
+    }
+    // 联网时语音流程交给服务端驱动；离线时模型退回本地占位流程。
+    cyber_model_set_remote_voice(&ctx->model, talk_ok);
+
+    cyber_ws_snapshot_t ws;
+    cyber_ws_get_snapshot(&ws);
+    const cyber_ws_state_t prev = ctx->ws_last;
+    const cyber_ws_state_t cur = ws.state;
+
+    // 只认【迁移】，不认电平：同一段回复期间 state 会一直是 SPEAKING，
+    // 每拍都灌一次会把 voice_ms 反复清零，界面上也什么都看不出变化。
+    // 判定终点用的也是边沿：SPEAKING→READY 才是"这一轮说完了"，
+    // 而 LISTENING→READY（用户主动停止收音）之后还要等服务端回复。
+    if (cur != prev) {
+        if (cur == CYBER_WS_SPEAKING) {
+            cyber_model_voice_event(&ctx->model, CYBER_VOICE_SPEAKING,
+                                    CYBER_EMO_HAPPY, ws.subtitle);
+        } else if (cur == CYBER_WS_ERROR) {
+            cyber_model_voice_event(&ctx->model, CYBER_VOICE_ERROR,
+                                    CYBER_EMO_GLITCH, NULL);
+        } else if (cur == CYBER_WS_READY && prev == CYBER_WS_SPEAKING) {
+            cyber_model_voice_event(&ctx->model, CYBER_VOICE_IDLE,
+                                    CYBER_EMO_NEUTRAL, NULL);
+        } else if (cur == CYBER_WS_IDLE && ctx->model.screen == CYBER_SCREEN_VOICE) {
+            // 链路断开：语音流程已经无法继续，收尾回主界面。
+            cyber_model_voice_event(&ctx->model, CYBER_VOICE_IDLE,
+                                    CYBER_EMO_NEUTRAL, NULL);
+        }
+        ctx->ws_last = cur;
+    }
+
+    // 同一段回复里服务端会逐句下发字幕：只更新文本，不重切状态。
+    if (ctx->model.voice == CYBER_VOICE_SPEAKING &&
+        strcmp(ws.subtitle, ctx->ws_subtitle) != 0) {
+        cyber_model_set_subtitle(&ctx->model, ws.subtitle);
+    }
+    memcpy(ctx->ws_subtitle, ws.subtitle, sizeof(ctx->ws_subtitle));
+
+    if (ws.state != ctx->ws_logged) {
+        ctx->ws_logged = ws.state;
+        ESP_LOGI(TAG, "会话 -> %s session=%s err=%d 握手=%u",
+                 cyber_ws_state_label(ws.state),
+                 ws.session_id[0] ? ws.session_id : "-",
+                 ws.last_error, (unsigned)ws.handshakes);
+    }
+
+    // 7) 落到界面（内部只改真正变化的部分）。
     cyber_ui_apply(ctx->ui, &ctx->model);
 }
 
@@ -373,6 +440,13 @@ void app_main(void)
     } else {
         ESP_LOGW(TAG, "NVS 不可用，跳过激活客户端");
     }
+
+    // 对话通道：只建队列与 worker，不建连。是否允许连接由 tick 按"已绑定 + 已联网"
+    // 下发（见 tick 第 6 步）——在这里就建连会在还没有凭证时白跑一次握手。
+    if (cyber_ws_init() != ESP_OK) {
+        ESP_LOGE(TAG, "对话通道初始化失败；语音入口将不可用");
+    }
+    cyber_net_log_heap("ws ready");
 
     // 启动收尾：从这一刻起，tick 才能把"客户端没起来/没联网"当作放行开机页的依据。
     // 必须在 s_ota_up 设置之后写，否则会短暂出现"启动已完成但客户端状态未知"的窗口。

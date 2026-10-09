@@ -97,6 +97,12 @@ _Static_assert(CYBER_PAIR_CODE_ROW * 2 == CYBER_PAIR_CODE_LEN,
 #define CYBER_SPEAK_MAX_MS      8000
 #define CYBER_ERROR_MS          2200  // 错误提示自动消失
 
+// 阶段 2（联网对话）的兜底超时。正常的态迁移由服务端事件驱动（stt / tts start /
+// tts stop），这几个值只在链路静默失效时兜底，因此必须给得足够宽：
+// 一个 6 秒的聆听上限会把用户一句稍长的话直接切掉，而服务端其实一直在正常收音。
+#define CYBER_REMOTE_THINK_TIMEOUT_MS  30000  // 迟迟没有回复：多半是对端没响应
+#define CYBER_REMOTE_SPEAK_TIMEOUT_MS  60000  // 最长的单段回复上限，超过按掉线处理
+
 #define CYBER_BLINK_PERIOD_MS   3800  // 眨眼周期
 #define CYBER_BLINK_MS           150  // 单次眨眼时长
 #define CYBER_WAVE_PERIOD_MS     700  // 声波条基础周期

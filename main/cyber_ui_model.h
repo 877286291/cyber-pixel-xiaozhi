@@ -163,6 +163,11 @@ typedef struct {
     cyber_boot_link_t boot_link; // 开机页进度条的链路阶段（由 main.c 从 OTA 状态映射）
     uint8_t boot_pct;            // 开机页当前进度 0..100，只增不减
 
+    // 语音由外部（服务端）驱动。置位后 tick 里那套占位流程全部让位：
+    // 不再伪造回复、不再按固定时长结束聆听/说话，只保留很宽的兜底超时。
+    // 由 main.c 在对话通道启用时置位（唯一同时看得见链路与界面任务的地方）。
+    bool remote_voice;
+
     char subtitle[CYBER_SUBTITLE_MAX + 1];
 } cyber_ui_model_t;
 
@@ -210,6 +215,14 @@ bool cyber_boot_waiting(const cyber_ui_model_t *m);
 // 阶段 1 不调用它，但状态机与 UI 已按同一套状态设计，接服务器时无需改渲染。
 void cyber_model_voice_event(cyber_ui_model_t *m, cyber_voice_state_t state,
                              cyber_emotion_t emo, const char *text);
+
+// 切换"语音是否由服务端驱动"。见字段注释。
+void cyber_model_set_remote_voice(cyber_ui_model_t *m, bool remote);
+
+// 只更新字幕文本，不触碰语音状态。用于服务端在同一段回复里逐句下发字幕
+// （tts sentence_start）：走 voice_event 会顺带把 voice_ms 清零、并重新切屏，
+// 结果是每来一句字幕就把兜底超时推后一次，且刷新一次屏幕。
+void cyber_model_set_subtitle(cyber_ui_model_t *m, const char *text);
 
 // ---------------------------------------------------------------------------
 // 派生查询（渲染层只读消费）
