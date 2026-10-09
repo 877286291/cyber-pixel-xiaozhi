@@ -32,6 +32,22 @@ run_static_checks() {
         tests/test_demo_navigation.c main/demo_navigation.c \
         -o "${test_dir}/test_demo_navigation"
     "${test_dir}/test_demo_navigation"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_cyber_ui_model.c main/cyber_ui_model.c \
+        -o "${test_dir}/test_cyber_ui_model"
+    "${test_dir}/test_cyber_ui_model"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_cyber_net_util.c main/cyber_net_util.c \
+        -o "${test_dir}/test_cyber_net_util"
+    "${test_dir}/test_cyber_net_util"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_cyber_ota_util.c main/cyber_ota_util.c \
+        -o "${test_dir}/test_cyber_ota_util"
+    "${test_dir}/test_cyber_ota_util"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain -Icomponents/bsp/src \
+        tests/test_cyber_ui_layout.c components/bsp/src/bsp_display_rounding.c \
+        -o "${test_dir}/test_cyber_ui_layout"
+    "${test_dir}/test_cyber_ui_layout"
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Icomponents/bsp/src \
         tests/test_bsp_display_rounding.c components/bsp/src/bsp_display_rounding.c \
         -o "${test_dir}/test_bsp_display_rounding"
