@@ -160,8 +160,44 @@ static void handle_json(const char *json, size_t len)
     json_str(root, "type", type, sizeof(type));
 
     if (strcmp(type, "hello") == 0) {
-        // 服务端可能带上 audio_params；本项目固定 16k/单声道/60ms，
-        // 若服务端要求不一致就是协商失败，而不是可以"将就"的情况。
+        // 服务端可能在 hello 里声明它实际采用的音频参数。本机在请求里写死了
+        // 16k/单声道/60ms，一旦服务端选了别的采样率，采集与播放的帧长就全错，
+        // 而症状只是"听不见声音"这种最难查的故障——所以在握手这一刻就要认出来。
+        const cJSON *ap = cJSON_GetObjectItemCaseSensitive(root, "audio_params");
+        char fmt[16];
+        int rate = 0;
+        int ch = 0;
+        int frame_ms = 0;
+        if (cJSON_IsObject(ap)) {
+            json_str(ap, "format", fmt, sizeof(fmt));
+            const cJSON *it = cJSON_GetObjectItemCaseSensitive(ap, "sample_rate");
+            if (cJSON_IsNumber(it)) rate = it->valueint;
+            it = cJSON_GetObjectItemCaseSensitive(ap, "channels");
+            if (cJSON_IsNumber(it)) ch = it->valueint;
+            it = cJSON_GetObjectItemCaseSensitive(ap, "frame_duration");
+            if (cJSON_IsNumber(it)) frame_ms = it->valueint;
+        } else {
+            fmt[0] = '\0';
+        }
+        if (fmt[0] != '\0' || rate != 0 || ch != 0 || frame_ms != 0) {
+            ESP_LOGI(TAG, "服务端音频参数：format=%s rate=%d channels=%d frame=%dms",
+                     fmt[0] ? fmt : "-", rate, ch, frame_ms);
+            // 官方协议文档 §8.3：上行固定写 16k，但"服务器下行音频可能使用
+            // 24000 采样率"（为了音乐播放效果），设备端"解码后再重采样"
+            // （§5.2）。实测 api.tenclass.net 正是回 24000。所以这里不是协商
+            // 失败，而是音频层必须分别对待两个方向的常态。
+            if (rate != 0 && rate != CYBER_WS_SAMPLE_RATE) {
+                ESP_LOGI(TAG, "下行采样率 %d != 上行 %d（协议允许，解码后按播放端重采样）",
+                         rate, (int)CYBER_WS_SAMPLE_RATE);
+            }
+            if (frame_ms != 0 && frame_ms != CYBER_WS_FRAME_MS) {
+                ESP_LOGW(TAG, "服务端帧长 %dms 与本机 %dms 不一致，每帧样本数需要重算",
+                         frame_ms, (int)CYBER_WS_FRAME_MS);
+            }
+        } else {
+            ESP_LOGI(TAG, "服务端 hello 未声明音频参数，沿用本机请求的 16k/1ch/60ms");
+        }
+
         char sid[CYBER_WS_SESSION_CAP];
         json_str(root, "session_id", sid, sizeof(sid));
         const cyber_ws_state_t st = step_publish(CYBER_WS_EV_HELLO, sid);
@@ -264,6 +300,12 @@ static void handle_data(const esp_websocket_event_data_t *e)
             // 二进制即 Opus 帧。本增量还没有解码器，因此明确丢弃并记录——
             // 静默丢弃会让"对方在说话但没声音"变成一个查不出来的现象。
             ESP_LOGD(TAG, "收到 Opus 帧 %u 字节（解码器尚未接线，丢弃）", (unsigned)s_rx_len);
+        } else if (s_rx_len == 0) {
+            // 空文本帧：实测 api.tenclass.net 每 ~10s 发一帧，是服务端的保活探测。
+            // 官方协议里没有它的定义（文档原文："空消息没有标准业务定义"），
+            // 也没有要求设备回应，所以这里什么都不做。判成解析失败会让日志
+            // 每 10 秒刷一条 WARN，把真正的异常淹掉。
+            ESP_LOGD(TAG, "服务端保活（空帧）");
         } else {
             handle_json(s_rx, s_rx_len);
         }
