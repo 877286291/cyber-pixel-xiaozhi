@@ -1,6 +1,9 @@
 dependencies:
   idf: ">=5.5.3,<5.6.0"
-  lvgl/lvgl: "^9.5.0"
+  # 精确钉住而不是 ^9.5.0：任何一次依赖清单变动都会触发重新求解，而 ^9.5.0
+  # 会让它悄悄跳到当时的最新版（实测 9.6.0~1）。界面尺寸、字体度量与这些
+  # 像素级布局强相关，LVGL 升级必须连同界面一起重验，不能是加依赖的副作用。
+  lvgl/lvgl: "9.5.0"
   espressif/esp_lvgl_port: "2.9.0"
   espressif/button: "4.2.0"
   espressif/esp_codec_dev: "1.6.2"
