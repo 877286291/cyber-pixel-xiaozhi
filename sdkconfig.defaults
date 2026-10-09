@@ -31,14 +31,23 @@ CONFIG_LV_MEM_SIZE_KILOBYTES=24
 # --- 系统 ---
 CONFIG_FREERTOS_HZ=1000
 
-# --- Bluetooth LE / NimBLE ---
-# ESP32-C3 仅支持 BLE；示例只启用单连接 peripheral 所需的最小 host 配置。
-CONFIG_BT_ENABLED=y
-CONFIG_BT_NIMBLE_ENABLED=y
-CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
-CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
-CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
-CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
-CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
-CONFIG_BT_NIMBLE_HOST_BASED_PRIVACY=n
-CONFIG_BT_NIMBLE_NVS_PERSIST=n
+# --- Bluetooth LE ---
+# 关掉:本应用没有任何 BLE 消费方。上游模板启用 BLE 是为了它的 demo 菜单,
+# 而本应用已用自建界面取代那个菜单(见 main/CMakeLists.txt 的说明)。
+# 关掉的价值:BLE 与 Wi-Fi 同时启用会拉起软件共存(CONFIG_ESP_COEX_SW_COEXIST_ENABLE),
+# 在无 PSRAM 的 C3 上这是要从本就紧张的内部内存里再切一块。后续做 Opus 时需要把
+# 每一 KB 都留给音频缓冲,所以不用就先关。
+# ★ 若将来采用 BLE/BLUFI 蓝牙配网,必须把这一段整体恢复(见
+#   docs/development/engineering/wifi-provisioning.md),并重新核算内存预算。
+
+# --- TLS / HTTPS(小智激活用)---
+# 激活要向 https://api.tenclass.net 发请求,必须开证书校验。
+# 证书包根证书编译进 Flash 只读区,不占 RAM;开启的代价是 Flash 体积,而本镜像
+# 在 app 分区里仍有大量余量,不构成约束。
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+
+# 非对称内容长度保持 ESP-IDF 默认(In 16KB / Out 4KB)。
+# 曾尝试把入站缓冲压到 8KB,但实测两点:(1) 已存在的 sdkconfig 会覆盖 sdkconfig.defaults,
+# 改这里并不会生效;(2) 服务端证书链的握手记录本就有数 KB,16KB 才是安全值。
+# 真正的省内存时机是音频通路接入后——那时再连同 Opus 缓冲一起重新核算,而不是现在
+# 为了 8KB 去赌一个更紧的握手缓冲。
