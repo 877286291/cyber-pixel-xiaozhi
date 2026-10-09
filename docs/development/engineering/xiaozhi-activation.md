@@ -26,8 +26,9 @@ Out of scope:
 
 - Wi-Fi provisioning, which is the first layer. See
   [Wi-Fi provisioning](wifi-provisioning.md);
-- the conversation protocol itself (WebSocket audio frames and JSON control
-  messages) once configuration has been obtained;
+- the conversation protocol itself (WebSocket audio frames and JSON control messages)
+  once configuration has been obtained. See the
+  [Xiaozhi conversation channel](xiaozhi-conversation.md);
 - self-hosted server deployments, whose activation rules differ.
 
 ## Why activation is required

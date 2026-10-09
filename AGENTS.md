@@ -58,6 +58,7 @@ retain the separate authorization requirements for flashing, Git writes, and pub
 | Chinese UI text or fonts | `docs/development/engineering/lvgl-chinese-fonts.md`, the application's font assets, configuration, and widget styles |
 | Wi-Fi connection or Bluetooth provisioning | `docs/development/engineering/wifi-provisioning.md`, the referenced `demo/blufi-provisioning` implementation |
 | Xiaozhi service activation or account binding | `docs/development/engineering/xiaozhi-activation.md` |
+| Xiaozhi conversation channel, WebSocket handshake, or audio parameters | `docs/development/engineering/xiaozhi-conversation.md` |
 | Build, test, dependencies, partitions | `docs/development/engineering/build-and-test.md`, `docs/development/engineering/firmware-layout.md`, `sdkconfig.defaults`, `partitions.csv` |
 | CI or release | the matching file in `docs/development/ci/CI-*.md` and `.github/workflows/` |
 | Project completion | `docs/development/release/project-completion.md` (then the `issue-suggestions` or `experience-pr` skill) |

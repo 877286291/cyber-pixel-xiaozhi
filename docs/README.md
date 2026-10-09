@@ -211,6 +211,7 @@ provide reference material. Choose the entry that matches your task.
 | [Chinese fonts](development/engineering/lvgl-chinese-fonts.md) | Glyph coverage, widget font selection, and blank-text troubleshooting |
 | [Wi-Fi provisioning](development/engineering/wifi-provisioning.md) | Bluetooth provisioning reference and companion mini program |
 | [Xiaozhi service activation](development/engineering/xiaozhi-activation.md) | Device binding, the check/activate contract, and configuration handoff |
+| [Xiaozhi conversation channel](development/engineering/xiaozhi-conversation.md) | WebSocket handshake, audio parameters, keepalive, and the measured session budget |
 | [Community projects and experience](reference/README.md) | Playbooks and reusable knowledge under `docs/reference/<username>/` |
 | [Contributing](contribution/README.md) | Documentation, commits, and pull-request conventions |
 | [Brand assets](brand/README.md) | Product visual references and [brand language](brand/brand-and-product.md) |

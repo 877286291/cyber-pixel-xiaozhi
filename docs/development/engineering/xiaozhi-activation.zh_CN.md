@@ -23,7 +23,8 @@
 不包含：
 
 - Wi-Fi 配网，那是第一层。见 [Wi-Fi 配网](wifi-provisioning.md)；
-- 拿到配置之后的对话协议本身（WebSocket 音频帧与 JSON 控制消息）；
+- 拿到配置之后的对话协议本身（WebSocket 音频帧与 JSON 控制消息）。
+  见[小智对话通道](xiaozhi-conversation.zh_CN.md)；
 - 自建服务端部署，其激活规则不同。
 
 ## 为什么需要激活
