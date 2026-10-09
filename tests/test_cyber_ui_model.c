@@ -856,6 +856,40 @@ static void test_activation_blocks_interaction(void)
     assert(m.screen == CYBER_SCREEN_ACTIVATION);
 }
 
+static void test_activation_page_never_sleeps(void)
+{
+    cyber_ui_model_t m;
+    cyber_model_init(&m);
+    cyber_model_set_pair(&m, CYBER_PAIR_WAITING, "663840");
+    advance(&m, CYBER_BOOT_MS, 40);
+    assert(m.screen == CYBER_SCREEN_ACTIVATION);
+
+    // 用户要盯着这 6 位码去别的设备输入，期间本来就不会碰设备：
+    // 远超关屏阈值也不得息屏，否则省电逻辑会把用户正要看的码关掉。
+    advance(&m, CYBER_IDLE_OFF_MS * 3, 40);
+    assert(m.screen == CYBER_SCREEN_ACTIVATION);
+    assert(m.idle == CYBER_IDLE_ACTIVE);
+    assert(m.backlight_percent == m.backlight_user);
+    assert(m.idle_ms == 0);   // 计时被按住，而不是缓慢逼近阈值
+
+    // 长按 OK 的主动关屏仍然有效：豁免不能把省电出口一起堵死。
+    assert(cyber_model_button(&m, CYBER_BTN_OK, CYBER_BTN_EV_LONG) == CYBER_ACT_NONE);
+    assert(advance(&m, 200, 40) == CYBER_ACT_BACKLIGHT);
+    assert(m.idle == CYBER_IDLE_OFF);
+
+    // 任意按键点亮并回到活动态。
+    assert(cyber_model_button(&m, CYBER_BTN_OK, CYBER_BTN_EV_CLICK) == CYBER_ACT_BACKLIGHT);
+    assert(m.idle == CYBER_IDLE_ACTIVE);
+
+    // 豁免只针对激活页：主界面照旧按无操作降亮、关屏。
+    cyber_model_init(&m);
+    boot_to_home(&m);
+    advance(&m, CYBER_IDLE_DIM_MS, 40);
+    assert(m.idle == CYBER_IDLE_DIM);
+    advance(&m, CYBER_IDLE_OFF_MS, 40);
+    assert(m.idle == CYBER_IDLE_OFF);
+}
+
 static void test_activation_releases_to_home(void)
 {
     cyber_ui_model_t m;
@@ -999,6 +1033,7 @@ int main(void)
     test_boot_meter_is_monotonic();
     test_boot_gate_has_timeout();
     test_activation_blocks_interaction();
+    test_activation_page_never_sleeps();
     test_activation_releases_to_home();
     test_activation_returning_from_offline();
     test_test_only_reaches_home();

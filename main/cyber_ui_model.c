@@ -169,9 +169,15 @@ cyber_action_t cyber_model_tick(cyber_ui_model_t *m, uint32_t dt_ms)
     m->anim_ms += dt_ms;
     m->idle_ms += dt_ms;
 
-    // 空闲降亮先于其它迁移判断：它是"无操作"的函数，与屏幕状态无关。
+    // 空闲降亮以"无操作"为准，但激活页例外：这一屏的用途就是让用户盯着 6 位码
+    // 到别的设备上输入，读码期间本来就不会碰设备，按无操作息屏会把用户正要看的
+    // 码关掉。所以激活页把计时按住（归零），除非用户主动关屏——长按 OK 会把
+    // idle_ms 直接顶到 OFF_MS，这里必须先认它、再按住，否则主动关屏会被下一拍取消。
+    const bool reading_code = (m->screen == CYBER_SCREEN_ACTIVATION);
     cyber_idle_t want = CYBER_IDLE_ACTIVE;
-    if (m->idle_ms >= CYBER_IDLE_OFF_MS) {
+    if (reading_code && m->idle_ms < CYBER_IDLE_OFF_MS) {
+        m->idle_ms = 0;
+    } else if (m->idle_ms >= CYBER_IDLE_OFF_MS) {
         want = CYBER_IDLE_OFF;
     } else if (m->idle_ms >= CYBER_IDLE_DIM_MS) {
         want = CYBER_IDLE_DIM;
