@@ -15,6 +15,28 @@
 - 添加字库前评估 Flash 与内部 RAM 影响；ESP32-C3 无 PSRAM。
 - 不提交许可不允许分发的字库。
 
+### 赛博像素 UI 字库集
+
+应用界面文字由两个 SIL Open Font License 1.1 字族渲染。两者都是按 8 px 网格绘制的轮廓 TTF，因此在 8 px 的整数倍上渲染能让字形边缘落在像素网格上，保持硬边像素观感。
+
+| 文件 | 字族、字级、位深 | 角色 | 用途 |
+| --- | --- | --- | --- |
+| [`fonts/silkscreen/Silkscreen-Regular.ttf`](fonts/silkscreen/Silkscreen-Regular.ttf) | Silkscreen Regular，轮廓 TTF | 源文件 | 两个 `cyber_font_*` 界面字级的源字体。 |
+| [`fonts/silkscreen/Silkscreen-Bold.ttf`](fonts/silkscreen/Silkscreen-Bold.ttf) | Silkscreen Bold，轮廓 TTF | 源文件 | 预留作强调字重，暂未转换。 |
+| [`fonts/pressstart2p/PressStart2P-Regular.ttf`](fonts/pressstart2p/PressStart2P-Regular.ttf) | Press Start 2P Regular，轮廓 TTF | 源文件 | 三个 `cyber_font_title*` / `cyber_font_code` 字级的源字体。 |
+| [`fonts/generated/cyber_font_sm.c`](fonts/generated/cyber_font_sm.c) | Silkscreen Regular，8 px，4 bpp | 生成物 | 状态栏与提示文字（`cyber_font_sm`）。 |
+| [`fonts/generated/cyber_font_md.c`](fonts/generated/cyber_font_md.c) | Silkscreen Regular，16 px，4 bpp | 生成物 | 状态名称与 AI 字幕文本（`cyber_font_md`）。 |
+| [`fonts/generated/cyber_font_title.c`](fonts/generated/cyber_font_title.c) | Press Start 2P Regular，16 px，4 bpp | 生成物 | 标题与短标签（`cyber_font_title`）。 |
+| [`fonts/generated/cyber_font_title_lg.c`](fonts/generated/cyber_font_title_lg.c) | Press Start 2P Regular，24 px，4 bpp | 生成物 | 开机横幅与大号读数（`cyber_font_title_lg`）。 |
+| [`fonts/generated/cyber_font_code.c`](fonts/generated/cyber_font_code.c) | Press Start 2P Regular，48 px，4 bpp | 生成物 | 配对码（`cyber_font_code`），界面里最大的一处文字，由激活屏拆成两行显示。 |
+
+- **许可。** 两个字族均为 SIL Open Font License 1.1，许可证全文以 `OFL.txt` 与各自源字体放在同一目录。允许再分发与嵌入。
+- **转换器。** `lv_font_conv` 1.5.3，产物与 [`../dependencies.lock`](../dependencies.lock) 锁定的 LVGL 9.5.0 兼容。全部重新生成请执行 `./assets/fonts/generate-fonts.sh`。
+- **集成方式。** 生成的 `.c` 由 `main` 组件编译，并在其中用 `LV_FONT_DECLARE` 声明；仅把字体文件放进本目录并不会自动链接或生效。
+- **字符覆盖。** 四个通用字体仅覆盖可打印 ASCII（`0x20-0x7E`）。界面为纯英文，因此刻意不含中文字形；要显示中文需另做子集化字体并明确不支持字符的处理策略，见 [`../docs/development/engineering/coding-conventions.md`](../docs/development/engineering/coding-conventions.md)。
+- **`cyber_font_code` 不是通用字体。** 配对码是用户唯一需要"隔着手臂距离从屏幕上读下来、再敲到另一台设备上"的字符串，因此它比其他所有文字都大得多。48 px 下若要覆盖完整可打印 ASCII，为画十个数字就得生成约 140 KB 的 C 文本；所以它的源范围只取空格、`-`、`:` 与 `0-9`。其余字符会**静默地什么都不渲染**——正文一律改用其它字体。
+- **资源成本。** 五个生成源文件合计约 119 KB 的 C 文本；链接后的字形位图更小，在 8 MB Flash 中占比可忽略。字体描述符为 `const` 常驻 Flash，RAM 开销仅剩 LVGL 的单字形绘制缓冲。
+
 ## 图片（images）
 
 可复用的源图与生成的显示资产放在 `images/`。
