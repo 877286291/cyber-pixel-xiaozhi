@@ -22,10 +22,13 @@ LV_FONT_DECLARE(cyber_font_title_lg);
 // 仅含 0-9 与 '-' ':'：配对码专用，别拿它渲染正文（缺字会静默地什么都不画）。
 LV_FONT_DECLARE(cyber_font_code);
 // 中文字幕字体：cyber_font_cjk（Noto Sans SC，SIL OFL 1.1，lv_font_conv 生成的
-// 16px/1bpp 位图子集，覆盖 0x20-0x7E ASCII + 0x4E00-0x9FFF 基本汉字约 6.7k 字）。
+// 16px/1bpp 位图子集，覆盖 0x20-0x7E ASCII + 0x4E00-0x9FFF 基本汉字约 6.7k 字
+// + 中文标点：0x3000-0x303F（、。「」等）、0xFF00-0xFFEF（，！？：等全角形式）、
+// 0x2014（—）、0x2018-0x201F（引号“”‘’）、0x2026（…））。
 // 像素字体只覆盖 ASCII、没有中文字形，而字幕是服务器下发的动态中文（STT 识别 +
 // TTS 回复），必须用含 CJK 字形的字体渲染，否则缺字 → 占位框（看起来像乱码）。
-// 该子集覆盖基本汉字区，覆盖绝大多数常用字；仍可能有个别生僻字/扩展区字符缺字，
+// 字幕中的标点属于必显字符（如“你好，世界！”），所以字库必须包含标点区段，
+// 不能只收汉字区；仍可能有个别生僻字/扩展区字符缺字，
 // 靠开启占位框（CONFIG_LV_USE_FONT_PLACEHOLDER）保持可见而非静默空白。
 // 注意：HOME 的 home_mode 仍用 cyber_font_md（像素风），只有字幕走这个字体。
 // 见 assets/README.md 与 docs/development/engineering/lvgl-chinese-fonts.md。

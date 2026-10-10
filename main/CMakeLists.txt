@@ -44,7 +44,8 @@ idf_component_register(
          "${CYBER_FONT_DIR}/cyber_font_title_lg.c"
          "${CYBER_FONT_DIR}/cyber_font_code.c"
          # 中文字幕字体：Noto Sans SC（SIL OFL 1.1），lv_font_conv 生成 16px/1bpp
-         # 位图子集，覆盖 0x20-0x7E（ASCII）+ 0x4E00-0x9FFF（基本汉字约 6.7k 字）。
+         # 位图子集，覆盖 0x20-0x7E（ASCII）+ 0x4E00-0x9FFF（基本汉字约 6.7k 字）
+         # + 中文标点（0x3000-0x303F、0xFF00-0xFFEF、0x2014、0x2018-0x201F、0x2026）。
          # 见 assets/fonts/generate-fonts.sh 末尾的生成命令与 assets/README.md。
          "${CYBER_FONT_DIR}/cyber_font_cjk.c"
     INCLUDE_DIRS "."

@@ -71,11 +71,19 @@ gen cyber_font_code.c      pressstart2p/PressStart2P-Regular.ttf 48  cyber_font_
 # cannot render. This is a *separate* font from the pixel set, generated from
 # the Noto Sans SC source (SIL OFL 1.1, see noto-sans-sc/OFL.txt).
 #
-# Range: printable ASCII plus the basic CJK block 0x4E00-0x9FFF (about 6.7k
-# characters, the GB2312 core set). This covers virtually all common Chinese
-# used in assistant replies; characters outside the block fall back to the
-# LVGL placeholder box (CONFIG_LV_USE_FONT_PLACEHOLDER=y), which is deliberate
-# rather than silent blank.
+# Range: printable ASCII, the basic CJK block 0x4E00-0x9FFF (about 6.7k
+# characters, the GB2312 core set) and the Chinese punctuation codepoints that
+# assistant replies and STT transcripts actually use:
+#   0x3000-0x303F  CJK punctuation  、。「」『』【】〔〕（…）etc.
+#   0xFF00-0xFFEF fullwidth forms    ，！？：；＠＃＄％＆＇（）＊＋…
+#   0x2014         em dash            ——
+#   0x2018-0x201F  curly quotes       “”‘’
+#   0x2026         horizontal ellipsis …
+# Subtitles are server-driven dynamic text, so punctuation is part of the
+# supported charset even though the static UI copy itself is ASCII only.
+# Characters outside this range still fall back to the LVGL placeholder box
+# (CONFIG_LV_USE_FONT_PLACEHOLDER=y), which is deliberate rather than silent
+# blank. The extra ~140 punctuation codepoints add only tens of KB at 1 bpp.
 #
 # 1 bpp (no antialiasing) is intentional: at 16 px a 4 bpp version of this
 # range is about 10 MB of C text, which would not fit the 8 MB flash, while the
@@ -91,7 +99,7 @@ gen_cjk() {
     printf 'generating %s  (Noto Sans SC, 16 px, 1 bpp)\n' "$out"
     npx --yes "$CONVERTER" \
         --font "noto-sans-sc/NotoSansSC-VF.ttf" \
-        --range "0x20-0x7E,0x4E00-0x9FFF" \
+        --range "0x20-0x7E,0x4E00-0x9FFF,0x3000-0x303F,0xFF00-0xFFEF,0x2014,0x2018-0x201F,0x2026" \
         --size 16 \
         --bpp 1 \
         --format lvgl \
