@@ -9,7 +9,17 @@
 
 static const char *TAG = "bsp_lvgl";
 
-#define BSP_LVGL_DRAW_BUFFER_LINES 40
+// 显示缓冲行数。缓冲 = 240 × 本值 × 2B(RGB565)，且必须是【内部 DMA RAM】
+// （C3 无 PSRAM，见下方 buff_dma 标志）。
+//
+// 从 40 行收到 28 行是为蓝牙配网腾出【连续】内部内存：BLE 协议栈初始化约需 45KB，
+// 且 NimBLE 的 host 任务要一块 4KB 连续栈（该任务创建失败时被 esp_nimble_enable
+// 静默吞掉，表现为"手机搜不到设备"，见 sdkconfig.defaults 的说明）。实测 40 行时
+// 配网可用的最大连续块只有 3584B，收窄后余量充足。
+//
+// 28 行 = 13.4KB（原 40 行 = 19.2KB），省下 5.8KB。它仍是整屏 320 行的 8.75%，
+// SPI 提交次数略增，但在 240x320 屏上刷新率无可感差异。
+#define BSP_LVGL_DRAW_BUFFER_LINES 28
 
 static lv_display_t *s_disp;
 static bool s_port_initialized;

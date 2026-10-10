@@ -303,7 +303,11 @@ static esp_err_t i2s_full_duplex_init(void) {
     i2s_chan_config_t chan = {
         .id = BSP_I2S_PORT,
         .role = I2S_ROLE_MASTER,
-        .dma_desc_num = 6,
+        // DMA 描述符数。每个描述符承载 dma_frame_num 个立体声帧（240 × 4B = 960B），
+        // 全双工下 TX/RX 各一份，均取自内部 DMA RAM。
+        // 从 6 收到 4 省约 3.8KB，同样是为蓝牙配网腾连续内存（见 sdkconfig.defaults）。
+        // 4 段仍有约 3.8ms 的硬件缓冲余量，对 60ms 一帧的 Opus 语音充裕。
+        .dma_desc_num = 4,
         .dma_frame_num = 240,
         .auto_clear_after_cb = true,
         .auto_clear_before_cb = false,
