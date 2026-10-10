@@ -38,6 +38,9 @@ static void test_init_defaults(void)
     assert(m.idle == CYBER_IDLE_ACTIVE);
     assert(m.backlight_user == 100);
     assert(m.backlight_percent == 100);
+    // 音量初值 80，与 cyber_audio 的 CYBER_AUDIO_VOLUME 一致：状态栏读数必须
+    // 与 codec 实际音量同起点，否则开机第一秒显示与听感对不上。
+    assert(cyber_model_volume(&m) == 80);
     // 未读到电量必须保持 -1，渲染层据此画 "--" 而不是编一个数字。
     assert(m.battery_soc == -1);
     assert(m.net_connected == false);
@@ -301,16 +304,12 @@ static void test_home_navigation(void)
     cyber_model_init(&m);
     boot_to_home(&m);
 
-    // 短按上/下在主界面轮转表情，便于逐个人工检查 7 种表情。
-    assert(cyber_model_button(&m, CYBER_BTN_DOWN, CYBER_BTN_EV_CLICK) == CYBER_ACT_NONE);
-    assert(m.emotion == CYBER_EMO_HAPPY);
-    assert(cyber_model_button(&m, CYBER_BTN_UP, CYBER_BTN_EV_CLICK) == CYBER_ACT_NONE);
-    assert(m.emotion == CYBER_EMO_NEUTRAL);
-    // 向上越过 0 必须回绕到最后一个，而不是变成负数。
-    assert(cyber_model_button(&m, CYBER_BTN_UP, CYBER_BTN_EV_CLICK) == CYBER_ACT_NONE);
-    assert(m.emotion == CYBER_EMO_COUNT - 1);
-    assert(cyber_model_button(&m, CYBER_BTN_DOWN, CYBER_BTN_EV_CLICK) == CYBER_ACT_NONE);
-    assert(m.emotion == CYBER_EMO_NEUTRAL);
+    // 短按上/下调音量（±10%）；表情不再由按键切换。
+    assert(cyber_model_button(&m, CYBER_BTN_DOWN, CYBER_BTN_EV_CLICK) == CYBER_ACT_VOLUME);
+    assert(cyber_model_volume(&m) == 70);
+    assert(m.emotion == CYBER_EMO_NEUTRAL);   // 按键不再动表情
+    assert(cyber_model_button(&m, CYBER_BTN_UP, CYBER_BTN_EV_CLICK) == CYBER_ACT_VOLUME);
+    assert(cyber_model_volume(&m) == 80);
 
     // 双击语义未定义，必须被忽略。
     assert(cyber_model_button(&m, CYBER_BTN_OK, CYBER_BTN_EV_DOUBLE) == CYBER_ACT_NONE);
@@ -320,6 +319,59 @@ static void test_home_navigation(void)
     assert(cyber_model_button(&m, CYBER_BTN_OK, CYBER_BTN_EV_CLICK) == CYBER_ACT_START_LISTEN);
     assert(m.screen == CYBER_SCREEN_VOICE);
     assert(m.voice == CYBER_VOICE_LISTENING);
+}
+
+static void test_volume_ladder(void)
+{
+    cyber_ui_model_t m;
+    cyber_model_init(&m);
+    boot_to_home(&m);
+
+    // 初始 80%（与 cyber_audio 的 CYBER_AUDIO_VOLUME 一致）。
+    assert(cyber_model_volume(&m) == 80);
+
+    // 短按上/下各调 10%。
+    assert(cyber_model_button(&m, CYBER_BTN_UP, CYBER_BTN_EV_CLICK) == CYBER_ACT_VOLUME);
+    assert(cyber_model_volume(&m) == 90);
+    assert(cyber_model_button(&m, CYBER_BTN_UP, CYBER_BTN_EV_CLICK) == CYBER_ACT_VOLUME);
+    assert(cyber_model_volume(&m) == 100);
+    // 上限封顶。
+    assert(cyber_model_button(&m, CYBER_BTN_UP, CYBER_BTN_EV_CLICK) == CYBER_ACT_VOLUME);
+    assert(cyber_model_volume(&m) == 100);
+
+    // 下限到 0（合法静音，不像背光那样留一档）。
+    for (int i = 0; i < 20; i++) {
+        cyber_model_button(&m, CYBER_BTN_DOWN, CYBER_BTN_EV_CLICK);
+    }
+    assert(cyber_model_volume(&m) == 0);
+    assert(cyber_model_button(&m, CYBER_BTN_DOWN, CYBER_BTN_EV_CLICK) == CYBER_ACT_VOLUME);
+    assert(cyber_model_volume(&m) == 0);
+
+    // 长按是亮度而非音量：调了亮度后音量必须保持不变。
+    const uint8_t vol_before = cyber_model_volume(&m);
+    assert(cyber_model_button(&m, CYBER_BTN_UP, CYBER_BTN_EV_LONG) == CYBER_ACT_BACKLIGHT);
+    assert(m.backlight_user == 100);
+    assert(cyber_model_volume(&m) == vol_before);
+}
+
+static void test_volume_works_on_voice_screen(void)
+{
+    cyber_ui_model_t m;
+    cyber_model_init(&m);
+    boot_to_home(&m);
+
+    // 进入语音流程。
+    assert(cyber_model_button(&m, CYBER_BTN_OK, CYBER_BTN_EV_CLICK) == CYBER_ACT_START_LISTEN);
+    assert(m.screen == CYBER_SCREEN_VOICE);
+
+    // AI 说话期间也要能调音量：设备级键，不能因为"正在说话"就调不了。
+    const uint8_t vol = cyber_model_volume(&m);
+    assert(cyber_model_button(&m, CYBER_BTN_DOWN, CYBER_BTN_EV_CLICK) == CYBER_ACT_VOLUME);
+    assert(cyber_model_volume(&m) == vol - CYBER_VOL_STEP_PERCENT);
+
+    // 长按调亮度，音量不变。
+    assert(cyber_model_button(&m, CYBER_BTN_UP, CYBER_BTN_EV_LONG) == CYBER_ACT_BACKLIGHT);
+    assert(cyber_model_volume(&m) == vol - CYBER_VOL_STEP_PERCENT);
 }
 
 static void test_voice_flow_offline(void)
@@ -1014,6 +1066,8 @@ int main(void)
     test_face_head_bands();
     test_boot_to_home();
     test_home_navigation();
+    test_volume_ladder();
+    test_volume_works_on_voice_screen();
     test_voice_flow_offline();
     test_voice_button_interrupts();
     test_voice_event_interface();

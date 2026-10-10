@@ -97,6 +97,7 @@ typedef enum {
     CYBER_ACT_STOP_LISTEN,    // 结束收音
     CYBER_ACT_ABORT,          // 打断本轮（阶段 2 会下发服务器 abort）
     CYBER_ACT_BACKLIGHT,      // 按 model->backlight_percent 设背光
+    CYBER_ACT_VOLUME,         // 按 model->volume_user 设播放音量
 } cyber_action_t;
 
 // 空闲档位：可穿戴设备靠降背光省电，渲染不停，按键立即恢复。
@@ -152,6 +153,7 @@ typedef struct {
 
     uint8_t backlight_user;      // 用户偏好亮度；降亮/关屏是它的临时覆盖
     uint8_t backlight_percent;   // 当前实际背光，CYBER_ACT_BACKLIGHT 的取值来源
+    uint8_t volume_user;         // 用户设定的播放音量 0..100%，CYBER_ACT_VOLUME 的取值来源
     uint8_t mock_index;          // 阶段 1 占位回复轮转序号
     int battery_soc;             // -1 = 读不到，UI 侧优雅降级
     bool net_connected;
@@ -238,6 +240,8 @@ const char *cyber_voice_label(cyber_voice_state_t s);
 uint32_t cyber_voice_color(cyber_voice_state_t s);
 // 主界面显示的表情名（短，供状态行用）。
 const char *cyber_emotion_label(cyber_emotion_t e);
+// 当前播放音量 0..100%。状态栏读数用；只读消费 model->volume_user。
+uint8_t cyber_model_volume(const cyber_ui_model_t *m);
 
 // 配对状态是否必须占住屏幕（即：未绑定或连不上服务端）。
 // 为真时界面停在激活页：主界面上的语音入口在绑定成功前根本走不通，

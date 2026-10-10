@@ -21,6 +21,15 @@ LV_FONT_DECLARE(cyber_font_title);
 LV_FONT_DECLARE(cyber_font_title_lg);
 // 仅含 0-9 与 '-' ':'：配对码专用，别拿它渲染正文（缺字会静默地什么都不画）。
 LV_FONT_DECLARE(cyber_font_code);
+// 中文字幕字体：cyber_font_cjk（Noto Sans SC，SIL OFL 1.1，lv_font_conv 生成的
+// 16px/1bpp 位图子集，覆盖 0x20-0x7E ASCII + 0x4E00-0x9FFF 基本汉字约 6.7k 字）。
+// 像素字体只覆盖 ASCII、没有中文字形，而字幕是服务器下发的动态中文（STT 识别 +
+// TTS 回复），必须用含 CJK 字形的字体渲染，否则缺字 → 占位框（看起来像乱码）。
+// 该子集覆盖基本汉字区，覆盖绝大多数常用字；仍可能有个别生僻字/扩展区字符缺字，
+// 靠开启占位框（CONFIG_LV_USE_FONT_PLACEHOLDER）保持可见而非静默空白。
+// 注意：HOME 的 home_mode 仍用 cyber_font_md（像素风），只有字幕走这个字体。
+// 见 assets/README.md 与 docs/development/engineering/lvgl-chinese-fonts.md。
+LV_FONT_DECLARE(cyber_font_cjk);
 
 // 布局常量是 BSP 硬件的副本（纯逻辑层不能 include LVGL 头），用静态断言钉住，
 // 换屏幕或改圆角半径时编译就失败，而不是等到上机才发现内容被切掉。
@@ -53,6 +62,7 @@ struct cyber_ui {
     lv_obj_t *link_label;
     lv_obj_t *batt_pct;
     lv_obj_t *batt_fill;
+    lv_obj_t *vol_pct;
 
     lv_obj_t *hint;
 
@@ -92,6 +102,7 @@ struct cyber_ui {
         cyber_emotion_t emotion;
         int battery_soc;
         bool net_connected;
+        uint8_t vol;
         uint8_t boot_progress;
         uint8_t boot_logs;
         cyber_pair_state_t pair;
@@ -204,6 +215,12 @@ static void build_statusbar(cyber_ui_t *ui)
     ui->batt_fill = make_rect(ui->screen, CYBER_BATT_FILL_X, CYBER_BATT_FILL_Y, 0,
                               CYBER_BATT_FILL_H, CYBER_LIME, LV_OPA_COVER);
 
+    // 播放音量读数：状态栏左侧链路标签与右侧电量之间的空档（x 70..166）。
+    // 语音设备的核心状态，常显比只在语音页显示更顺手（调音量时随时能看到当前值）。
+    ui->vol_pct = make_label(ui->screen, &cyber_font_sm, CYBER_TEXT_DIM);
+    place_label(ui->vol_pct, CYBER_VOL_PCT_X, CYBER_LINK_Y, CYBER_VOL_PCT_W,
+                CYBER_LINK_H, LV_TEXT_ALIGN_LEFT);
+
     make_neon_rule(ui->screen, CYBER_STATUS_RULE_X, CYBER_STATUS_RULE_Y,
                    CYBER_STATUS_RULE_W, CYBER_STATUS_RULE_H);
 }
@@ -276,7 +293,8 @@ static const char *hint_for(const cyber_ui_model_t *m)
         }
     case CYBER_SCREEN_HOME:
     default:
-        return "OK TALK  UP/DN FACE";
+        // 短按 UP/DOWN 调音量，长按调亮度（设备级键，语音页同样生效）。
+        return "OK TALK  UP/DN VOL  HOLD BL";
     }
 }
 
@@ -402,7 +420,9 @@ static void build_voice_page(cyber_ui_t *ui)
     }
 
     // 字幕是唯一允许换行的标签：给固定宽度 + 居中，最多两行（见 CYBER_VOICE_SUB_H）。
-    ui->voice_sub = make_label(page, &cyber_font_md, CYBER_TEXT);
+    // 用 cyber_font_cjk（完整中文字体）而非 cyber_font_md：字幕是服务器下发的动态
+    // 中文，像素字体没有中文字形会缺字成乱码（见本文件顶部字体声明处的说明）。
+    ui->voice_sub = make_label(page, &cyber_font_cjk, CYBER_TEXT);
     lv_label_set_long_mode(ui->voice_sub, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_set_pos(ui->voice_sub, CYBER_VOICE_SUB_X, CYBER_VOICE_SUB_Y);
     lv_obj_set_width(ui->voice_sub, CYBER_VOICE_SUB_W);
@@ -531,6 +551,10 @@ void cyber_ui_apply(cyber_ui_t *ui, const cyber_ui_model_t *m)
     // --- 状态栏 ---
     if (first || ui->applied.battery_soc != m->battery_soc) {
         update_battery(ui, m->battery_soc);
+    }
+    if (first || ui->applied.vol != cyber_model_volume(m)) {
+        lv_label_set_text_fmt(ui->vol_pct, "%u%%", (unsigned)cyber_model_volume(m));
+        ui->applied.vol = cyber_model_volume(m);
     }
     if (first || ui->applied.net_connected != m->net_connected) {
         lv_label_set_text(ui->link_label, cyber_model_link_label(m));

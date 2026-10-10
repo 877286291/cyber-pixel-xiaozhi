@@ -14,9 +14,10 @@ set(CYBER_FONT_DIR "${CMAKE_CURRENT_LIST_DIR}/../assets/fonts/generated")
 #   cyber_ota_util  pure activation rules: code check, poll pacing, body builder
 #   cyber_ota       activation client: HTTPS check, JSON parse, NVS persistence
 #   cyber_ws_util   pure conversation rules: control messages, session state machine
+#   cyber_audio_util pure audio rules: downlink format check, frame math, frame queue
+#   cyber_audio     the I2S/Opus worker: mic capture, playback, format switching
 # The upstream demo pages stay absent: this application replaces that menu rather
-# than reusing it. Networking is present now, but the audio path is still unwired,
-# so the Opus/I2S half of the conversation pipeline is not registered yet.
+# than reusing it.
 # 注意：开发期凭证头（cyber_wifi_dev.h，可选且被 gitignore）刻意【不】在这里做
 # CMake 依赖声明：组件 CMakeLists.txt 会被 ESP-IDF 当脚本再 include 一次以提取依赖，
 # 那一趟里 set_source_files_properties / set_property 都不可用（会报 "not scriptable"）。
@@ -35,15 +36,21 @@ idf_component_register(
          "cyber_ota.c"
          "cyber_ws_util.c"
          "cyber_ws.c"
+         "cyber_audio_util.c"
+         "cyber_audio.c"
          "${CYBER_FONT_DIR}/cyber_font_sm.c"
          "${CYBER_FONT_DIR}/cyber_font_md.c"
          "${CYBER_FONT_DIR}/cyber_font_title.c"
          "${CYBER_FONT_DIR}/cyber_font_title_lg.c"
          "${CYBER_FONT_DIR}/cyber_font_code.c"
+         # 中文字幕字体：Noto Sans SC（SIL OFL 1.1），lv_font_conv 生成 16px/1bpp
+         # 位图子集，覆盖 0x20-0x7E（ASCII）+ 0x4E00-0x9FFF（基本汉字约 6.7k 字）。
+         # 见 assets/fonts/generate-fonts.sh 末尾的生成命令与 assets/README.md。
+         "${CYBER_FONT_DIR}/cyber_font_cjk.c"
     INCLUDE_DIRS "."
     REQUIRES bsp nvs_flash esp_wifi esp_netif esp_event esp_timer
-             esp_http_client esp-tls mbedtls json spi_flash
-             esp_websocket_client esp-opus
+             esp_http_client esp-tls mbedtls spi_flash
+             esp_websocket_client espressif__esp_audio_codec
 )
 
 # lv_font_conv emits either "lvgl.h" or "lvgl/lvgl.h" depending on this macro.

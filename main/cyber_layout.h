@@ -57,6 +57,11 @@
 #define CYBER_BATT_PCT_X        (CYBER_BATT_BODY_X - 4 - CYBER_BATT_PCT_W)
 #define CYBER_BATT_PCT_Y        7
 
+// 播放音量读数（"80%"）：放在左侧链路标签（止于 x=70）与右侧电量之间。
+// 左缘取 74 避开链路文字，宽度 44 容纳 3 位百分数 + %（sm 字体约 7px/字符）。
+#define CYBER_VOL_PCT_X         74
+#define CYBER_VOL_PCT_W         44
+
 // 状态栏下沿的霓虹分隔线。两端各留一点：满幅会被上排圆角削掉，
 // 一条"两头缺角"的线比短一点的线更扎眼。
 #define CYBER_STATUS_RULE_X     4

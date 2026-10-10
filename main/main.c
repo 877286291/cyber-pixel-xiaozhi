@@ -12,10 +12,12 @@
 //   - Wi-Fi 事件任务要通知"已联网"，它只写一个 bool，再由 LVGL 任务读走并写进模型。
 //     这样跨任务共享量只有一个标志位，模型的写入方始终只有 LVGL 任务。
 #include "bsp_battery.h"
+#include "bsp_audio.h"
 #include "bsp_button.h"
 #include "bsp_display.h"
 #include "bsp_i2c.h"
 #include "bsp_pins.h"
+#include "cyber_audio.h"
 #include "cyber_net.h"
 #include "cyber_ota.h"
 #include "cyber_theme.h"
@@ -38,6 +40,8 @@ static const char *TAG = "cyber";
 // 但 SOC 本身缓变，没必要每帧都问一次。
 #define CYBER_BATT_TICKS   (10000 / CYBER_TICK_MS)
 #define CYBER_INPUT_DEPTH  8
+// 等首个 OTA【成功】结论的上限。超过它就放行语音，避免服务端异常时把语音一起锁死。
+#define CYBER_VOICE_WAIT_OTA_MS  30000u
 
 typedef struct {
     bsp_btn_t btn;
@@ -56,6 +60,18 @@ typedef struct {
     cyber_ws_state_t ws_logged;         // 仅用于"状态变化时才打日志"
     bool talk_enabled;                  // 已下发的启用状态，避免每拍重复投递请求
     char ws_subtitle[CYBER_WS_SUBTITLE_CAP];  // 上一拍的服务器字幕，用于去重
+    // 音频。上一拍的阶段用于只在【迁移】时下发格式与清队列，避免每拍重复写标志。
+    cyber_audio_phase_t audio_last;
+    // 上行统计的上一拍值，用于按秒聚合出"实际上行通不通"，而不是逐帧打日志。
+    uint32_t audio_tx_last;
+    uint32_t audio_tick;
+    // 开机以来的毫秒数。用于给"等首个 OTA 成功结论"设一个上限，避免服务端异常时
+    // 把语音功能一起锁死。刻意不复用 model.screen_ms：那个值是"当前这一屏停留了
+    // 多久"，切屏就会清零，不能当开机时长用。
+    uint32_t up_ms;
+    // 开机时 NVS 里是否已有对话凭证。有的话就不必等 OTA 检查——见 tick 第 6 步：
+    // 早建连不只是"快"，更是把 TLS 握手放在内存最宽裕的时刻。
+    bool have_cached_ws;
 } app_ctx_t;
 
 static QueueHandle_t s_btn_queue;
@@ -196,6 +212,11 @@ static void apply_action(app_ctx_t *ctx, cyber_action_t act)
     case CYBER_ACT_BACKLIGHT:
         bsp_display_backlight(ctx->model.backlight_percent);
         break;
+    case CYBER_ACT_VOLUME:
+        // 音量落到 codec：bsp_audio_set_volume 在非播放期只会缓存（s_opened 为
+        // false 时只更新内部值），播放开始时会恢复，所以这里每拍直接调用是安全的。
+        bsp_audio_set_volume(ctx->model.volume_user);
+        break;
     case CYBER_ACT_START_LISTEN:
         cyber_ws_request_listen(true);
         break;
@@ -211,10 +232,29 @@ static void apply_action(app_ctx_t *ctx, cyber_action_t act)
     }
 }
 
+// 会话状态 → 音频阶段。半双工：聆听即采集，回复即播放，其余一律停下。
+//
+// 映射放在这里而不是 cyber_audio 里：cyber_audio 只管"怎么采怎么放"，它不该知道
+// 会话状态机长什么样；反过来模型层也拿不到 Opus/I2S 的语义。这里是唯一同时看得见
+// 两边的位置（与 map_pair 同一个理由）。
+//
+// CONNECTING/READY 都归 IDLE：握手期间还没有下行格式，也没有可采集的对象。READY
+// 是"这一轮说完了"，此时必须停播——否则播放器会继续吃上一轮残留的帧。
+static cyber_audio_phase_t audio_phase_for(cyber_ws_state_t st)
+{
+    switch (st) {
+    case CYBER_WS_LISTENING: return CYBER_AUDIO_CAPTURE;
+    case CYBER_WS_SPEAKING:  return CYBER_AUDIO_PLAYBACK;
+    default:                 return CYBER_AUDIO_IDLE;
+    }
+}
+
 static void tick_cb(lv_timer_t *timer)
 {
     app_ctx_t *ctx = (app_ctx_t *)lv_timer_get_user_data(timer);
     if (ctx == NULL) return;
+
+    ctx->up_ms += CYBER_TICK_MS;
 
     // 1) 先消化按键：模型只在 LVGL 任务里被修改。
     input_event_t in;
@@ -282,14 +322,42 @@ static void tick_cb(lv_timer_t *timer)
     }
 
     // 6) 驱动对话通道。
-    //    通道只在"已绑定 + 已联网"时开启：未绑定时没有有效凭证，建连只会得到
-    //    一次必然失败的握手，并把界面推到 ERROR。
-    const bool talk_ok = net && !cyber_pair_blocks_ui(ctx->model.pair) &&
+    //    通道只在"已绑定 + 已联网"时开启，并且要避免 WebSocket 的 TLS 握手与
+    //    OTA 检查在同一段内存里撞车。判定顺序是的取舍如下。
+    //
+    //    【有缓存凭证】就直接建连，不等 OTA 检查。这不只是为了快——更是因为握手
+    //    需要一大块【连续】内存才能做完证书链校验（实测 leaf←GeoTrust G2←
+    //    DigiCert Global Root G2，RSA4096，单证书约 2 KB）。而一次 OTA 检查会
+    //    分配再释放 ~40 KB 的 TLS 缓冲，把堆切碎：实测握手可见的 largest 从
+    //    43008（检查前）掉到 22528（检查后），恰好吃不下证书链，症状却是
+    //    "找不到可信根证书"这种看起来与内存无关的报错。所以顺序反过来：先建连，
+    //    OTA 检查自然被 defer 挡在后面，堆不会被切碎。
+    //
+    //    缓存凭证若已失效（服务端轮换 token），表现是建连失败 → 状态回到 IDLE →
+    //    defer 落下 → OTA 检查才真正执行并刷新凭证 → 下一轮建连用上新凭证。
+    //    也就是说 OTA 检查从"开机必经"变成了"建连失败时的修复路径"，这正好是它
+    //    该扮演的角色，也让"不需要 OTA"的设备在正常运行时不产生任何 OTA 流量。
+    //
+    //    【无缓存凭证】时才退回原来的顺序：等 OTA 检查给出凭证。首次激活本来就要
+    //    等用户在控制台完成绑定，这段等待不可省，此时也还没有语音会话要保护。
+    //
+    //    失败结论（ERROR）不算"已就绪"：它常常只是开机时网络还没稳，而一旦建连
+    //    把这个重试挡掉，那个"稍后会成功"就永远不会发生了。ota_give_up 是兜底，
+    //    避免服务端异常时把语音一起锁死。
+    const bool ota_settled = ota_resolved(&ota) &&
+                             ota.state != CYBER_OTA_STATE_ERROR;
+    const bool ota_give_up = ctx->up_ms >= CYBER_VOICE_WAIT_OTA_MS;
+    const bool ready_source = ota_settled || ota_give_up || !s_ota_up ||
+                              ctx->have_cached_ws;
+    const bool talk_ok = net && ready_source &&
+                         !cyber_pair_blocks_ui(ctx->model.pair) &&
                          ctx->model.pair != CYBER_PAIR_OFF;
     if (talk_ok != ctx->talk_enabled) {
         cyber_ws_set_enabled(talk_ok);
         ctx->talk_enabled = talk_ok;
-        ESP_LOGI(TAG, "对话通道 %s", talk_ok ? "开启" : "关闭");
+        ESP_LOGI(TAG, "对话通道 %s（ota_settled=%d 缓存凭证=%d up=%ums）",
+                 talk_ok ? "开启" : "关闭", (int)ota_settled,
+                 (int)ctx->have_cached_ws, (unsigned)ctx->up_ms);
     }
     // 联网时语音流程交给服务端驱动；离线时模型退回本地占位流程。
     cyber_model_set_remote_voice(&ctx->model, talk_ok);
@@ -327,6 +395,59 @@ static void tick_cb(lv_timer_t *timer)
         cyber_model_set_subtitle(&ctx->model, ws.subtitle);
     }
     memcpy(ctx->ws_subtitle, ws.subtitle, sizeof(ctx->ws_subtitle));
+
+    // 6b) 音频阶段。放在会话迁移之后：这一拍刚判定的 state 就是音频该处的阶段，
+    //     中间不再插一次快照。
+    //
+    //     下行格式每拍都下发一次，而不是只在握手那一拍：set_downlink 只是拿一次
+    //     无争用的互斥锁 + 拷 8 字节，代价可以忽略；换成"只在迁移时下发"则要在
+    //     ctx 里再存一份 handshakes，多一处状态就多一处可能不同步的地方。
+    //     顺序上先格式后阶段：worker 进入 PLAYBACK 时会读它，若反过来，就会有一拍
+    //     用默认的 16 kHz 去解 24 kHz 的流（听起来是慢放的怪声）。
+    cyber_audio_set_downlink(&ws.downlink);
+    const cyber_audio_phase_t aim = audio_phase_for(ws.state);
+    if (aim != ctx->audio_last) {
+        ctx->audio_last = aim;
+        cyber_audio_set_phase(aim);
+        ESP_LOGI(TAG, "音频 -> %s（下行 %u Hz）",
+                 aim == CYBER_AUDIO_CAPTURE ? "采集" :
+                 aim == CYBER_AUDIO_PLAYBACK ? "播放" : "停止",
+                 (unsigned)ws.downlink.rate);
+    }
+
+    // 会话占用期间挂起后台 OTA 检查：一次 check 要开一条 TLS，实测与 WebSocket
+    // 会话叠加时堆最低点只剩 32716 B，对话中途触发会威胁音频缓冲。
+    //
+    // CONNECTING 也必须算进去：预建连一启动就占内存，若这时放行检查，两者会正面对撞
+    // （实测把检查挤成 state=5）。含 READY 是因为两轮对话之间 TLS 仍然挂着，占用并
+    // 没有释放。
+    cyber_ota_set_defer(ws.state == CYBER_WS_CONNECTING ||
+                        ws.state == CYBER_WS_READY ||
+                        ws.state == CYBER_WS_LISTENING ||
+                        ws.state == CYBER_WS_SPEAKING);
+
+    // 上行每 60 ms 一帧，逐帧打日志会淹没串口。5 秒聚合一次：这一行能直接回答
+    // "采集到底有没有真的发出去"，而这个问题的症状（服务端一直不回复）与
+    // "麦克风没声音"看起来完全一样。
+    if (++ctx->audio_tick >= (5000 / CYBER_TICK_MS)) {
+        ctx->audio_tick = 0;
+        cyber_audio_stats_t as;
+        cyber_audio_get_stats(&as);
+        const uint32_t sent = as.tx_frames - ctx->audio_tx_last;
+        ctx->audio_tx_last = as.tx_frames;
+        if (as.tx_frames != 0u || as.rx_frames != 0u || ctx->audio_last != CYBER_AUDIO_IDLE) {
+            ESP_LOGI(TAG, "音频：上行 %u 帧/5s（累计 %u 丢 %u 编码错 %u 分配失败 %u），"
+                          "下行 %u 帧（解错 %u 写错 %u 读错 %u），"
+                          "抖动丢 满%u 超长%u，栈余量 %u B",
+                     (unsigned)sent, (unsigned)as.tx_frames, (unsigned)as.tx_dropped,
+                     (unsigned)as.encode_errors, (unsigned)as.alloc_failures,
+                     (unsigned)as.rx_frames,
+                     (unsigned)as.decode_errors, (unsigned)as.write_errors,
+                     (unsigned)as.read_errors, (unsigned)as.queue_dropped_full,
+                     (unsigned)as.queue_dropped_oversize,
+                     (unsigned)as.stack_high_water);
+        }
+    }
 
     if (ws.state != ctx->ws_logged) {
         ctx->ws_logged = ws.state;
@@ -437,6 +558,13 @@ void app_main(void)
             // 就会允许开机页按 OTA 结果放行。
             s_ota_up = true;
         }
+
+        // NVS 里是否已有对话凭证。用专门的"存在性查询"而不是 get_ws_config：
+        // 后者需要足够大的缓冲，用小缓冲会因 NVS 长度校验失败而把"有"误判成"无"。
+        // 有缓存时的行为差异见 tick 第 6 步：可以直接建连，从而把 TLS 握手放在
+        // 内存最宽裕的时刻。
+        ctx.have_cached_ws = cyber_ota_has_ws_config();
+        ESP_LOGI(TAG, "缓存对话凭证：%s", ctx.have_cached_ws ? "有" : "无");
     } else {
         ESP_LOGW(TAG, "NVS 不可用，跳过激活客户端");
     }
@@ -447,6 +575,21 @@ void app_main(void)
         ESP_LOGE(TAG, "对话通道初始化失败；语音入口将不可用");
     }
     cyber_net_log_heap("ws ready");
+
+    // 音频通路：接在对话通道之后。
+    //   1) 音频要在收到二进制帧时有地方可去，所以接收点必须早于允许建连（tick 里
+    //      才下发 talk_ok，因此这里的顺序天然满足）；
+    //   2) 上行接收点接的是 cyber_ws_send_audio —— 契约上它只能被音频 worker 调用，
+    //      而 worker 是这里 xTaskCreate 出来的，接线本身就是这两个模块唯一的耦合点，
+    //      放在一起是为了让"谁调谁"一眼可见。
+    // 失败不阻塞启动：文本通路（字幕、状态机）不依赖音频，仍可工作。
+    if (cyber_audio_init() != ESP_OK) {
+        ESP_LOGE(TAG, "音频通路初始化失败；对话将只有字幕没有声音");
+    } else {
+        cyber_audio_set_tx_sink(cyber_ws_send_audio);
+        cyber_ws_set_audio_sink(cyber_audio_push_opus);
+    }
+    cyber_net_log_heap("audio ready");
 
     // 启动收尾：从这一刻起，tick 才能把"客户端没起来/没联网"当作放行开机页的依据。
     // 必须在 s_ota_up 设置之后写，否则会短暂出现"启动已完成但客户端状态未知"的窗口。

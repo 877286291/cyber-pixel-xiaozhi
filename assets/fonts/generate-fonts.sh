@@ -8,9 +8,10 @@
 # hard-edged pixel look.
 #
 # Coverage is printable ASCII only (0x20-0x7E): the application UI, the boot
-# banner, and mock subtitles are English. There is deliberately no CJK coverage;
-# adding Chinese text requires a separate subsetted font plus an unsupported
-# character policy, per docs/development/engineering/coding-conventions.md.
+# banner, and mock subtitles are English. There is deliberately no CJK coverage
+# in the pixel fonts; the AI subtitles are Chinese, so a separate subsetted
+# font (cyber_font_cjk, see the CJK section at the end of this script) renders
+# them, per docs/development/engineering/coding-conventions.md.
 #
 # 4 bpp keeps antialiasing available for the few glyphs that do not land
 # exactly on the grid. The whole set is well under 100 KB of Flash.
@@ -62,5 +63,43 @@ gen cyber_font_title_lg.c  pressstart2p/PressStart2P-Regular.ttf 24  cyber_font_
 # ':' and the digits. Do not use it for prose: any other character renders as
 # nothing at all, silently.
 gen cyber_font_code.c      pressstart2p/PressStart2P-Regular.ttf 48  cyber_font_code "0x20,0x2D,0x30-0x3A"
+
+# ---------------------------------------------------------------------------
+# CJK subtitle font (cyber_font_cjk)
+#
+# The AI subtitles are server-driven Chinese, which the ASCII-only pixel fonts
+# cannot render. This is a *separate* font from the pixel set, generated from
+# the Noto Sans SC source (SIL OFL 1.1, see noto-sans-sc/OFL.txt).
+#
+# Range: printable ASCII plus the basic CJK block 0x4E00-0x9FFF (about 6.7k
+# characters, the GB2312 core set). This covers virtually all common Chinese
+# used in assistant replies; characters outside the block fall back to the
+# LVGL placeholder box (CONFIG_LV_USE_FONT_PLACEHOLDER=y), which is deliberate
+# rather than silent blank.
+#
+# 1 bpp (no antialiasing) is intentional: at 16 px a 4 bpp version of this
+# range is about 10 MB of C text, which would not fit the 8 MB flash, while the
+# 1 bpp version links to a few MB and keeps the firmware at roughly 70% free.
+# 16 px CJK at 1 bpp is fully legible on this 240x320 display and matches the
+# non-antialiased pixel aesthetic. --no-compress is used so the font does not
+# depend on the compressed-glyph decoder configuration.
+#
+# This step needs the Noto Sans SC TTF in this directory; the committed
+# generated/cyber_font_cjk.c is what the firmware actually compiles.
+gen_cjk() {
+    local out="$1"
+    printf 'generating %s  (Noto Sans SC, 16 px, 1 bpp)\n' "$out"
+    npx --yes "$CONVERTER" \
+        --font "noto-sans-sc/NotoSansSC-VF.ttf" \
+        --range "0x20-0x7E,0x4E00-0x9FFF" \
+        --size 16 \
+        --bpp 1 \
+        --format lvgl \
+        --no-compress \
+        --lv-font-name "cyber_font_cjk" \
+        --lv-include lvgl.h \
+        -o "generated/$out"
+}
+gen_cjk cyber_font_cjk.c
 
 printf 'done: %s\n' "$(ls generated)"

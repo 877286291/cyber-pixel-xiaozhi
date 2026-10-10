@@ -119,3 +119,5 @@ _Static_assert(CYBER_PAIR_CODE_ROW * 2 == CYBER_PAIR_CODE_LEN,
 #define CYBER_IDLE_OFF_MS      45000  // 无操作 45s 关背光（保留渲染，按键即亮）
 #define CYBER_BL_DIM_PERCENT      25
 #define CYBER_BL_STEP_PERCENT     20  // 长按上/下调一档背光
+
+#define CYBER_VOL_STEP_PERCENT    10  // 短按上/下调一档音量

@@ -24,6 +24,14 @@ CONFIG_LV_COLOR_DEPTH_16=y
 CONFIG_LV_DEF_REFR_PERIOD=20
 CONFIG_LV_FONT_MONTSERRAT_14=y
 CONFIG_LV_FONT_MONTSERRAT_20=y
+# 中文字幕用自生成的 cyber_font_cjk（assets/fonts/generated，Noto Sans SC 完整
+# 常用汉字子集），不需要 LVGL 内置的思源黑体 CJK 子集（其约 700 常用字实测仍大量
+# 缺字成方框；且内置字体会额外占用约 1MB flash）。
+# 缺字必须可见：占位框打开，缺字画方框而不糊成空白。关占位框只掩盖缺陷、不修复
+# 覆盖，见 docs/development/engineering/lvgl-chinese-fonts.md。
+CONFIG_LV_USE_FONT_PLACEHOLDER=y
+# 文本编码 UTF-8：服务器字幕是合法 UTF-8，必须按 UTF-8 解码而非 ASCII。
+CONFIG_LV_TXT_ENC_UTF8=y
 # 压缩字形的解压器。assets/fonts/generated 下的 5 个字体都由 lv_font_conv 以
 # --bpp 4 生成，即 font_dsc.bitmap_format = LV_FONT_FMT_TXT_COMPRESSED。
 # 关掉它不会编译失败，只会让 lv_font_get_bitmap_fmt_txt() 对每个字形返回 NULL：
@@ -46,11 +54,25 @@ CONFIG_FREERTOS_HZ=1000
 # ★ 若将来采用 BLE/BLUFI 蓝牙配网,必须把这一段整体恢复(见
 #   docs/development/engineering/wifi-provisioning.md),并重新核算内存预算。
 
-# --- TLS / HTTPS(小智激活用)---
+# --- TLS / HTTPS(小智激活 + 对话)---
 # 激活要向 https://api.tenclass.net 发请求,必须开证书校验。
 # 证书包根证书编译进 Flash 只读区,不占 RAM;开启的代价是 Flash 体积,而本镜像
 # 在 app 分区里仍有大量余量,不构成约束。
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+
+# api.tenclass.net 的链走 DigiCert 交叉签名(GeoTrust 中间证书由交叉背书的根签发),
+# 默认的单锚验证会命中错误的那条信任路径,报 PK verify 0x4290 / CERT_VERIFY_FAILED。
+# 该选项(仅 ESP-IDF 6.x 提供)让证书包同时尝试交叉背书的两条根路径,与官方
+# xiaozhi-esp32 的 sdkconfig.defaults 对齐。
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y
+
+# 低内存 TLS 配置,对齐官方 defaults(其注释标记为 "# Fix ESP_SSL error")。
+# 本板无 PSRAM、单核 C3,音频通路接入后堆很紧:握手期保留整张对端证书 + 静态大
+# 缓冲,会在 RSA4096 中间证书验签的峰值内存上失败。动态缓冲 + 不保留对端证书 +
+# 关闭重协商,把握手峰值 RAM 压下来,让 Opus/LVGL/WiFi 并存时仍能完成链验证。
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+CONFIG_MBEDTLS_SSL_KEEP_PEER_CERTIFICATE=n
+CONFIG_MBEDTLS_SSL_RENEGOTIATION=n
 
 # 非对称内容长度保持 ESP-IDF 默认(In 16KB / Out 4KB)。
 # 曾尝试把入站缓冲压到 8KB,但实测两点:(1) 已存在的 sdkconfig 会覆盖 sdkconfig.defaults,

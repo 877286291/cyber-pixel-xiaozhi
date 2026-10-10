@@ -129,6 +129,19 @@ static cyber_action_t adjust_backlight(cyber_ui_model_t *m, int steps)
     return CYBER_ACT_BACKLIGHT;
 }
 
+// 音量步进：UP/DOWN 长按各调 10%。0 是合法值（真正静音），所以不像背光那样
+// 留一档——静音是用户想要的真实状态，不是"按键失效"。
+static cyber_action_t adjust_volume(cyber_ui_model_t *m, int steps)
+{
+    int level = (int)m->volume_user + steps * CYBER_VOL_STEP_PERCENT;
+    if (level < 0) level = 0;
+    if (level > 100) level = 100;
+    m->volume_user = (uint8_t)level;
+    m->idle = CYBER_IDLE_ACTIVE;
+    apply_idle_backlight(m);
+    return CYBER_ACT_VOLUME;
+}
+
 // ---------------------------------------------------------------------------
 // 初始化
 // ---------------------------------------------------------------------------
@@ -143,6 +156,9 @@ void cyber_model_init(cyber_ui_model_t *m)
     m->idle = CYBER_IDLE_ACTIVE;
     m->backlight_user = 100;
     m->backlight_percent = 100;
+    // 音量初值与 cyber_audio 的 CYBER_AUDIO_VOLUME 一致：模型读数（状态栏显示）
+    // 必须与 codec 实际音量同起点，否则开机第一秒显示与实际听感对不上。
+    m->volume_user = 80;
     m->battery_soc = -1;      // 未知：渲染层画"--"而不是编一个数字
     m->net_connected = false; // 阶段 1 未联网
     // 配对流程默认关闭：这样阶段 1 的演示流程与宿主单测的行为与接入激活前完全一致。
@@ -297,9 +313,8 @@ cyber_action_t cyber_model_tick(cyber_ui_model_t *m, uint32_t dt_ms)
 static cyber_action_t home_button(cyber_ui_model_t *m, cyber_btn_t btn,
                                   cyber_btn_ev_t ev)
 {
+    // UP/DOWN 已被 cyber_model_button 顶部统一拦截（音量/亮度），这里只剩 OK。
     if (ev == CYBER_BTN_EV_LONG) {
-        if (btn == CYBER_BTN_UP) return adjust_backlight(m, +1);
-        if (btn == CYBER_BTN_DOWN) return adjust_backlight(m, -1);
         if (btn == CYBER_BTN_OK) {
             // 立即省电：把空闲计时直接推到关屏阈值，复用 tick 里的统一降亮路径，
             // 避免"手动关屏"和"空闲关屏"两套逻辑各自维护背光状态。
@@ -310,13 +325,6 @@ static cyber_action_t home_button(cyber_ui_model_t *m, cyber_btn_t btn,
     if (ev != CYBER_BTN_EV_CLICK) return CYBER_ACT_NONE;
 
     switch (btn) {
-    case CYBER_BTN_UP:
-        // 上/下短按在主界面手动切表情，便于不接服务器时逐个检查 7 种表情。
-        m->emotion = (cyber_emotion_t)((m->emotion + CYBER_EMO_COUNT - 1u) % CYBER_EMO_COUNT);
-        return CYBER_ACT_NONE;
-    case CYBER_BTN_DOWN:
-        m->emotion = (cyber_emotion_t)((m->emotion + 1u) % CYBER_EMO_COUNT);
-        return CYBER_ACT_NONE;
     case CYBER_BTN_OK:
         enter_voice(m, CYBER_VOICE_LISTENING);
         enter_screen(m, CYBER_SCREEN_VOICE);
@@ -383,6 +391,22 @@ cyber_action_t cyber_model_button(cyber_ui_model_t *m, cyber_btn_t btn,
         m->idle = CYBER_IDLE_ACTIVE;
         apply_idle_backlight(m);
         if (was_off) return CYBER_ACT_BACKLIGHT;
+    }
+
+    // UP/DOWN 是设备级音量/亮度键，主界面与语音页都生效——尤其是语音页：AI 说话
+    // 时用户要能随手调音量，不能因为"正在说话"就调不了。这里统一拦截，各屏不再
+    // 各自实现，避免主界面能调、语音页调不了这种漂移。
+    // 开机动画与激活页例外：前者很短不可打断；后者用户正盯着 6 位码去别的设备输入，
+    // 此时按 UP/DOWN 不该让设备有任何反应（误以为操作生效）。这两屏直接返回 NONE，
+    // 由下面的各屏分支兜底（它们对 UP/DOWN 本就无动作）。
+    if (btn == CYBER_BTN_UP || btn == CYBER_BTN_DOWN) {
+        if (m->screen == CYBER_SCREEN_HOME || m->screen == CYBER_SCREEN_VOICE) {
+            const int dir = (btn == CYBER_BTN_UP) ? +1 : -1;
+            // 短按调音量（高频操作），长按调亮度（低频，且有空闲降亮兜底）。
+            if (ev == CYBER_BTN_EV_LONG)  return adjust_backlight(m, dir);
+            if (ev == CYBER_BTN_EV_CLICK) return adjust_volume(m, dir);
+        }
+        return CYBER_ACT_NONE;
     }
 
     switch (m->screen) {
@@ -537,6 +561,11 @@ const char *cyber_emotion_label(cyber_emotion_t e)
 {
     if (e >= CYBER_EMO_COUNT) return EMOTION_NAME[CYBER_EMO_NEUTRAL];
     return EMOTION_NAME[e];
+}
+
+uint8_t cyber_model_volume(const cyber_ui_model_t *m)
+{
+    return (m == NULL) ? 0 : m->volume_user;
 }
 
 const char *cyber_model_link_label(const cyber_ui_model_t *m)
