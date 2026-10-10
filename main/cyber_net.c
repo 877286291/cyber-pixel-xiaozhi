@@ -50,6 +50,8 @@ typedef struct {
     bool inited;
     bool started;
     bool connected;
+    bool have_creds;           // 上次 start 时是否解析到可用凭证（错误页据此区分"没配置"）
+    uint8_t last_reason;       // 最近一次断开/失败的 Wi-Fi reason 码（错误页据此给出原因）
 } cyber_net_ctx_t;
 
 static cyber_net_ctx_t s_net;
@@ -197,6 +199,7 @@ static void wifi_evt_cb(void *arg, esp_event_base_t base, int32_t id, void *data
         const wifi_event_sta_disconnected_t *d =
             (const wifi_event_sta_disconnected_t *)data;
         // 只打 reason 码不打密码：reason 是排查"密码错/信号弱"的关键信息。
+        s_net.last_reason = (d != NULL) ? d->reason : 0u;
         ESP_LOGW(TAG, "断开 (reason=%d)", (d != NULL) ? (int)d->reason : -1);
         notify(false);
         schedule_retry();
@@ -219,6 +222,7 @@ static void ip_evt_cb(void *arg, esp_event_base_t base, int32_t id, void *data)
         ESP_LOGI(TAG, "已获取 IP: " IPSTR, IP2STR(&ev->ip_info.ip));
     }
     s_net.attempts = 0;   // 连上了就清空退避，下次断开从最短间隔重试
+    s_net.last_reason = 0;   // 连上了，上一次失败的原因不再代表现状
     // 顺带撤掉可能已排好的重试：不撤的话它到期会再调一次 esp_wifi_connect()，
     // 虽是无害的空操作，但会在日志里留下令人困惑的多余一行。
     (void)esp_timer_stop(s_net.retry);
@@ -315,9 +319,11 @@ esp_err_t cyber_net_start(void)
     if (!resolve_creds(&creds)) {
         // 没有凭证不是故障：设备照常开机，界面显示 OFFLINE，
         // 等后续配网功能补上凭证再 start。
+        s_net.have_creds = false;
         ESP_LOGW(TAG, "无可用 Wi-Fi 凭证，保持未连接（界面显示 OFFLINE）");
         return ESP_ERR_NOT_FOUND;
     }
+    s_net.have_creds = true;
 
     wifi_config_t cfg = { 0 };
     memcpy(cfg.sta.ssid, creds.ssid, creds.ssid_len);
@@ -381,6 +387,41 @@ esp_err_t cyber_net_stop(void)
 bool cyber_net_is_connected(void)
 {
     return s_net.connected;
+}
+
+void cyber_net_get_status(cyber_net_status_t *out)
+{
+    if (out == NULL) return;
+    out->connected = s_net.connected;
+    out->have_creds = s_net.have_creds;
+    out->last_reason = s_net.last_reason;
+    out->attempts = s_net.attempts;
+}
+
+esp_err_t cyber_net_kick(void)
+{
+    if (!s_net.inited) return ESP_ERR_INVALID_STATE;
+
+    // 还没启动过（通常是开机时没凭证）：再试一次 start，好让刚写入的新凭证生效。
+    if (!s_net.started) {
+        ESP_LOGI(TAG, "手动重试：重新解析凭证并启动");
+        return cyber_net_start();
+    }
+
+    // 已启动：清空退避 + 撤掉待发的重试，立刻发起一次连接。
+    // 不清退避的话，用户按了之后仍要等最多 15s 才会轮到下一个退避点，
+    // 观感上就是"按了没反应"。
+    s_net.attempts = 0;
+    (void)esp_timer_stop(s_net.retry);
+    ESP_LOGI(TAG, "手动重试：立刻重连");
+    const esp_err_t err = esp_wifi_connect();
+    if (err != ESP_OK) {
+        // 同步失败只会在这一个点出现（驱动状态未就绪）；排一次退避兜底，
+        // 与 retry_cb 同一套逻辑，避免重连静默停死。
+        ESP_LOGW(TAG, "手动重连失败: %s，转入退避", esp_err_to_name(err));
+        schedule_retry();
+    }
+    return err;
 }
 
 esp_err_t cyber_net_clear_credentials(void)

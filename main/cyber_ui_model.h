@@ -14,6 +14,9 @@
 #include <stdint.h>
 
 #include "cyber_theme.h"
+// cyber_net_err_t：网络错误分类。两个头文件都是纯逻辑、无 ESP-IDF 依赖，
+// 让模型直接持有错误类型，避免在接线层再复制一份枚举（会漂移）。
+#include "cyber_net_util.h"
 
 // ---------------------------------------------------------------------------
 // 屏幕
@@ -23,6 +26,7 @@ typedef enum {
     CYBER_SCREEN_HOME,       // 主界面：机甲脸 + 状态栏
     CYBER_SCREEN_VOICE,      // 语音反馈：聆听/思考/说话/出错
     CYBER_SCREEN_ACTIVATION, // 未绑定：显示配对码等用户在控制台绑定
+    CYBER_SCREEN_NET_ERROR,  // 联网失败：全屏给出原因与排查建议（替代旧的静默 OFFLINE）
 } cyber_screen_t;
 
 // ---------------------------------------------------------------------------
@@ -98,6 +102,7 @@ typedef enum {
     CYBER_ACT_ABORT,          // 打断本轮（阶段 2 会下发服务器 abort）
     CYBER_ACT_BACKLIGHT,      // 按 model->backlight_percent 设背光
     CYBER_ACT_VOLUME,         // 按 model->volume_user 设播放音量
+    CYBER_ACT_RETRY_NET,      // 错误页长按 OK：重新发起联网
 } cyber_action_t;
 
 // 空闲档位：可穿戴设备靠降背光省电，渲染不停，按键立即恢复。
@@ -158,6 +163,11 @@ typedef struct {
     int battery_soc;             // -1 = 读不到，UI 侧优雅降级
     bool net_connected;
 
+    // 网络错误（CYBER_NET_ERR_NONE = 正常）。非 NONE 时界面停在错误页：
+    // 连不上网就先让用户解决网络，而不是把一个"连不上服务端"的激活页摆出来。
+    // 由 main.c 每个 tick 从 cyber_net 状态快照 + OTA 快照换算后写入。
+    cyber_net_err_t net_err;
+
     cyber_pair_state_t pair;     // 配对流程状态（CYBER_PAIR_OFF = 未启用）
     char pair_code[CYBER_PAIR_CODE_LEN + 1];  // 仅 WAITING 时有 6 位数字；否则为 ""
 
@@ -188,6 +198,10 @@ cyber_action_t cyber_model_button(cyber_ui_model_t *m, cyber_btn_t btn,
 // 外部状态注入（电量/网络）。带 -1 或 false 时 UI 必须优雅降级。
 void cyber_model_set_battery(cyber_ui_model_t *m, int soc);
 void cyber_model_set_net(cyber_ui_model_t *m, bool connected);
+
+// 外部状态注入（网络错误）。NONE 表示恢复正常；非 NONE 时界面切到错误页。
+// 由 main.c 每拍从 cyber_net 状态快照 + OTA 快照换算。幂等。
+void cyber_model_set_net_err(cyber_ui_model_t *m, cyber_net_err_t err);
 
 // 外部状态注入（配对流程）。code 可为 NULL；只有 WAITING 时它才非空。
 // "是否为合法 6 位数字"的校验发生在 cyber_ota 这一侧的边界上（cyber_ota_code_valid），
@@ -235,6 +249,16 @@ cyber_emotion_t cyber_model_visible_emotion(const cyber_ui_model_t *m);
 uint32_t cyber_emotion_color(cyber_emotion_t e);
 // 状态栏左侧文字（"ONLINE" / "OFFLINE"）。
 const char *cyber_model_link_label(const cyber_ui_model_t *m);
+
+// --- 网络错误页的文案（仅当 screen == CYBER_SCREEN_NET_ERROR 时有意义）---
+// 大字英文标题（像素风），恒为 "NET ERROR"：具体的失败原因交给下面两行中文。
+const char *cyber_net_err_title(void);
+// 失败原因的中文短句（如"Wi-Fi 密码错误"）。
+const char *cyber_net_err_reason(cyber_net_err_t err);
+// 排查建议的中文短句（如"请检查热点密码"）。
+const char *cyber_net_err_suggestion(cyber_net_err_t err);
+// 错误页强调色：统一用故障红，让"出问题了"一眼可辨。
+uint32_t cyber_net_err_color(cyber_net_err_t err);
 // 语音状态标签与强调色。
 const char *cyber_voice_label(cyber_voice_state_t s);
 uint32_t cyber_voice_color(cyber_voice_state_t s);

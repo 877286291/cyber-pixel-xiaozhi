@@ -60,6 +60,7 @@ struct cyber_ui {
     lv_obj_t *home_page;
     lv_obj_t *voice_page;
     lv_obj_t *pair_page;
+    lv_obj_t *net_err_page;
 
     // 共用状态栏（电量固定右上角）
     lv_obj_t *link_label;
@@ -97,6 +98,12 @@ struct cyber_ui {
     lv_obj_t *pair_scan_track;
     lv_obj_t *pair_scan_head;
 
+    // 网络错误页
+    lv_obj_t *ne_title;
+    lv_obj_t *ne_rule;
+    lv_obj_t *ne_reason;
+    lv_obj_t *ne_suggest;
+
     // 上次已应用值：用于跳过无变化的重设
     struct {
         bool valid;
@@ -112,6 +119,7 @@ struct cyber_ui {
         char pair_code[CYBER_PAIR_CODE_LEN + 1];
         int pair_scan;
         char subtitle[CYBER_SUBTITLE_MAX + 1];
+        cyber_net_err_t net_err;
     } applied;
 };
 
@@ -294,6 +302,9 @@ static const char *hint_for(const cyber_ui_model_t *m)
         case CYBER_VOICE_ERROR:     return "OK BACK";
         default:                    return "HOLD OK EXIT";
         }
+    case CYBER_SCREEN_NET_ERROR:
+        // 文案长度上限受 CYBER_HINT_W 约束（sm 字体 7px/字符，208px ≈ 28 字符）。
+        return "HOLD OK RETRY";
     case CYBER_SCREEN_HOME:
     default:
         // 短按 UP/DOWN 调音量，长按调亮度（设备级键，语音页同样生效）。
@@ -486,6 +497,37 @@ static void build_activation_page(cyber_ui_t *ui)
 }
 
 // ---------------------------------------------------------------------------
+// 网络错误页
+// ---------------------------------------------------------------------------
+// 联网失败时的全屏提示：大字英文标题（像素风）+ 两行中文（原因 / 建议）。
+// 中文行必须用 cyber_font_cjk：像素字体没有汉字，拿它渲染中文会缺字成占位框。
+// 控件数刻意压到 4 个（标题/警示线/原因/建议），与其他页同一套省内存的取舍。
+static void build_net_error_page(cyber_ui_t *ui)
+{
+    lv_obj_t *page = make_page(ui->screen);
+    ui->net_err_page = page;
+    if (page == NULL) return;
+
+    ui->ne_title = make_label(page, &cyber_font_title_lg, CYBER_RED);
+    lv_label_set_text(ui->ne_title, cyber_net_err_title());
+    place_label(ui->ne_title, CYBER_NETERR_TITLE_X, CYBER_NETERR_TITLE_Y,
+                CYBER_NETERR_TITLE_W, CYBER_NETERR_TITLE_H, LV_TEXT_ALIGN_CENTER);
+
+    // 红色警示线：与激活页的霓虹线同一手法，把"出问题了"钉在标题下方。
+    ui->ne_rule = make_neon_rule(page, CYBER_NETERR_RULE_X, CYBER_NETERR_RULE_Y,
+                                 CYBER_NETERR_RULE_W, CYBER_NETERR_RULE_H);
+
+    // 原因行用故障红强调，建议行用次要色；初值留空，进错误页时由 apply 填。
+    ui->ne_reason = make_label(page, &cyber_font_cjk, CYBER_RED);
+    place_label(ui->ne_reason, CYBER_NETERR_TEXT_X, CYBER_NETERR_REASON_Y,
+                CYBER_NETERR_TEXT_W, CYBER_NETERR_TEXT_H, LV_TEXT_ALIGN_CENTER);
+
+    ui->ne_suggest = make_label(page, &cyber_font_cjk, CYBER_TEXT_DIM);
+    place_label(ui->ne_suggest, CYBER_NETERR_TEXT_X, CYBER_NETERR_SUGGEST_Y,
+                CYBER_NETERR_TEXT_W, CYBER_NETERR_TEXT_H, LV_TEXT_ALIGN_CENTER);
+}
+
+// ---------------------------------------------------------------------------
 // 建/删
 // ---------------------------------------------------------------------------
 cyber_ui_t *cyber_ui_create(void)
@@ -505,12 +547,13 @@ cyber_ui_t *cyber_ui_create(void)
     lv_obj_set_style_bg_opa(ui->screen, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_clear_flag(ui->screen, LV_OBJ_FLAG_SCROLLABLE);
 
-    // 层级从低到高：背景网格 → 四个页面 → 状态栏/提示条 → 抖动层。
+    // 层级从低到高：背景网格 → 五个页面 → 状态栏/提示条 → 抖动层。
     ui->bg = cyber_bg_create(ui->screen, CYBER_SCREEN_W, CYBER_SCREEN_H);
     build_boot_page(ui);
     build_home_page(ui);
     build_voice_page(ui);
     build_activation_page(ui);
+    build_net_error_page(ui);
     build_statusbar(ui);
     build_hint(ui);
     ui->glitch = cyber_glitch_create(ui->screen, CYBER_SCREEN_W, CYBER_SCREEN_H);
@@ -518,6 +561,7 @@ cyber_ui_t *cyber_ui_create(void)
     set_hidden(ui->home_page, true);
     set_hidden(ui->voice_page, true);
     set_hidden(ui->pair_page, true);
+    set_hidden(ui->net_err_page, true);
 
     lv_screen_load(ui->screen);
     return ui;
@@ -549,6 +593,7 @@ void cyber_ui_apply(cyber_ui_t *ui, const cyber_ui_model_t *m)
         set_hidden(ui->home_page, m->screen != CYBER_SCREEN_HOME);
         set_hidden(ui->voice_page, m->screen != CYBER_SCREEN_VOICE);
         set_hidden(ui->pair_page, m->screen != CYBER_SCREEN_ACTIVATION);
+        set_hidden(ui->net_err_page, m->screen != CYBER_SCREEN_NET_ERROR);
     }
 
     // --- 状态栏 ---
@@ -670,12 +715,27 @@ void cyber_ui_apply(cyber_ui_t *ui, const cyber_ui_model_t *m)
         }
     }
 
+    // --- 网络错误页 ---
+    if (m->screen == CYBER_SCREEN_NET_ERROR) {
+        // screen_changed 必须参与判定：从别的页切进来时 net_err 往往已经等于模型当前值
+        // （模型在切屏前就已经被 main.c 写好了），少了这一项两行中文会一次都不写。
+        if (first || screen_changed || ui->applied.net_err != m->net_err) {
+            lv_label_set_text(ui->ne_reason, cyber_net_err_reason(m->net_err));
+            lv_label_set_text(ui->ne_suggest, cyber_net_err_suggestion(m->net_err));
+            // 标题与原因共用故障红：颜色由模型给，避免这里再写一份配色判断。
+            const uint32_t color = cyber_net_err_color(m->net_err);
+            lv_obj_set_style_text_color(ui->ne_title, lv_color_hex(color), LV_PART_MAIN);
+            lv_obj_set_style_text_color(ui->ne_reason, lv_color_hex(color), LV_PART_MAIN);
+        }
+    }
+
     // --- 记录本次已应用值 ---
     ui->applied.screen = m->screen;
     ui->applied.voice = m->voice;
     ui->applied.emotion = emo;
     ui->applied.battery_soc = m->battery_soc;
     ui->applied.net_connected = m->net_connected;
+    ui->applied.net_err = m->net_err;
     ui->applied.pair = m->pair;
     strncpy(ui->applied.pair_code, m->pair_code, sizeof(ui->applied.pair_code) - 1u);
     ui->applied.pair_code[sizeof(ui->applied.pair_code) - 1u] = '\0';

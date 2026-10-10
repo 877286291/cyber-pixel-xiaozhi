@@ -35,6 +35,30 @@ esp_err_t cyber_net_stop(void);
 // 当前是否已关联且拿到 IP。
 bool cyber_net_is_connected(void);
 
+// ---------------------------------------------------------------------------
+// 连接状态快照：供错误页给出"为什么连不上"的准确原因。
+//
+// 为什么单独提供：cyber_net 只用布尔量把上下线抛给应用，接线层看不出
+// "是没凭证、还是密码错、还是找不到热点"。错误页需要区分这些，否则只能写
+// 一句无用的"连不上"。快照由 LVGL 任务周期性拉取，不阻塞。
+// ---------------------------------------------------------------------------
+typedef struct {
+    bool connected;       // 已关联 AP 且拿到 IP
+    bool have_creds;      // 是否有可用凭证（没有时永远连不上）
+    uint8_t last_reason;  // 最近一次断开/失败的 Wi-Fi reason 码；0 = 尚无原因
+    uint8_t attempts;     // 连续失败次数（饱和，见 cyber_net_retry_bump）
+} cyber_net_status_t;
+
+// 读取当前状态快照。out 必须非 NULL。
+void cyber_net_get_status(cyber_net_status_t *out);
+
+// 用户主动重试：重置退避并立刻发起一次连接。
+// - 已启动：清空退避、撤掉待发的定时器，马上 esp_wifi_connect()；
+// - 尚未启动（例如开机时无凭证）：等同于再试一次 cyber_net_start()，
+//   这样刚写入的新凭证不必重启设备就能生效。
+// 供错误页的"长按重试"使用。
+esp_err_t cyber_net_kick(void);
+
 // 清除 NVS 里的凭证。给后续"配网/换网"功能用；会同时断开当前连接。
 // 刻意显式提供：仓库的配网规范要求凭证必须有明确的清除途径。
 esp_err_t cyber_net_clear_credentials(void);

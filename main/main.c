@@ -141,6 +141,33 @@ static cyber_boot_link_t map_boot_link(const cyber_ota_snapshot_t *ota, bool net
     }
 }
 
+// cyber_net 状态 + OTA 快照 → "错误页该显示哪条原因"。
+//
+// 核心规则：**只要没联网就算错误**，激活页只在"已联网但未配对"时才出现。
+// 早期版本给"有凭证但还没连上"留了 8 秒宽限，结果那段窗口里错误原因是 NONE、
+// 界面退回到激活页，用户先看到几秒配对码再被错误页顶掉——比直接报错更糟。
+// 开机时"还在连"这个过渡态由开机页负责覆盖（它本来就按住到联网或超时），
+// 这里一旦被调用就说明开机页已经放行，此时没网就是真的出问题了。
+//
+//   - 已联网：只有"未绑定且服务端查询失败"才算错误——已绑定的设备偶发一次
+//     查询失败不该被打回错误页（与 map_pair 对 ERROR 的处理同一考量）。
+//   - 未联网且无凭证：确定性失败，重试也没用，必须去配网。
+//   - 未联网但有凭证：按真实 reason 报原因；reason==0 说明还没收到断开事件，
+//     用笼统的"连接失败"，不猜成"密码错误"之类会误导排查方向的原因。
+static cyber_net_err_t classify_net_error(const cyber_ota_snapshot_t *ota, bool net,
+                                          const cyber_net_status_t *ns)
+{
+    if (net) {
+        if (ota->state == CYBER_OTA_STATE_ERROR && !ota->paired) {
+            return CYBER_NET_ERR_SERVER;
+        }
+        return CYBER_NET_ERR_NONE;
+    }
+    if (!ns->have_creds) return CYBER_NET_ERR_NO_CREDS;
+    if (ns->last_reason == 0u) return CYBER_NET_ERR_OTHER;
+    return cyber_net_classify_reason(ns->last_reason);
+}
+
 // Wi-Fi 事件任务与 LVGL 任务之间唯一的共享量。
 // 事件回调只做一次布尔写入，模型读取后立刻转成模型字段；单字节对齐写是原子的，
 // 且这里不存在"读-改-写"复合操作，所以不需要加锁。
@@ -226,6 +253,10 @@ static void apply_action(app_ctx_t *ctx, cyber_action_t act)
     case CYBER_ACT_ABORT:
         cyber_ws_request_abort();
         break;
+    case CYBER_ACT_RETRY_NET:
+        // 错误页长按重试：重新解析凭证 / 立刻重连。非阻塞（内部只发一次连接请求）。
+        (void)cyber_net_kick();
+        break;
     case CYBER_ACT_NONE:
     default:
         break;
@@ -290,6 +321,12 @@ static void tick_cb(lv_timer_t *timer)
     cyber_model_set_pair(&ctx->model, map_pair(&ota, net), ota.code);
     // 开机页进度条的阶段：由上面的 OTA 快照换算，不含旧绑定结论（见 map_boot_link）。
     cyber_model_set_boot_link(&ctx->model, map_boot_link(&ota, net));
+
+    // 5b) 网络错误分类：把"为什么连不上"写进模型，供错误页显示。
+    //     放在 OTA 快照之后——"服务端不可达"要靠 ota->state 判定。
+    cyber_net_status_t ns;
+    cyber_net_get_status(&ns);
+    cyber_model_set_net_err(&ctx->model, classify_net_error(&ota, net, &ns));
 
     // 放开开机页。三种情况都该放：
     //   1) OTA 有结论了 —— 这是常态路径，也是这次改动的目的：开机动画一直演到

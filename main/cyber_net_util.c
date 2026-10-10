@@ -43,3 +43,29 @@ uint8_t cyber_net_retry_bump(uint8_t attempt)
     return (attempt < CYBER_NET_RETRY_SATURATE) ? (uint8_t)(attempt + 1u)
                                                : (uint8_t)CYBER_NET_RETRY_SATURATE;
 }
+
+cyber_net_err_t cyber_net_classify_reason(uint8_t reason)
+{
+    // 数值 = wifi_err_reason_t。注释里保留符号名，方便对照 IDF 头文件。
+    switch (reason) {
+    case 201:   // WIFI_REASON_NO_AP_FOUND
+        return CYBER_NET_ERR_AP_NOT_FOUND;
+
+    case 202:   // WIFI_REASON_AUTH_FAIL
+    case 15:    // WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT
+    case 2:     // WIFI_REASON_AUTH_EXPIRE
+    case 4:     // WIFI_REASON_ASSOC_EXPIRE
+        return CYBER_NET_ERR_AUTH_FAIL;
+
+    case 200:   // WIFI_REASON_BEACON_TIMEOUT
+    case 203:   // WIFI_REASON_ASSOC_FAIL
+    case 204:   // WIFI_REASON_HANDSHAKE_TIMEOUT
+    case 205:   // WIFI_REASON_CONNECTION_FAIL
+        return CYBER_NET_ERR_TIMEOUT;
+
+    default:
+        // 不认识的原因不硬套成上面几种：错误页宁可显示"连接失败"，
+        // 也不要给出一个会被用户照着排查却方向错误的提示。
+        return CYBER_NET_ERR_OTHER;
+    }
+}

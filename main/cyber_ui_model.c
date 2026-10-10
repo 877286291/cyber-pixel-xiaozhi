@@ -56,6 +56,29 @@ static const uint32_t PAIR_COLOR[] = {
     CYBER_MAGENTA, CYBER_TEXT_DIM, CYBER_RED,
 };
 
+// 网络错误 → 中文原因 + 排查建议。数组顺序必须与 cyber_net_err_t 一致。
+// 文案用 cyber_font_cjk 渲染，所用汉字都落在字库覆盖的基本汉字区（0x4E00-0x9FFF）；
+// "Wi-Fi" 是 ASCII，字库同样覆盖。改文案时必须重新核对字形覆盖
+// （见 docs/development/engineering/lvgl-chinese-fonts.zh_CN.md）。
+static const char *const NET_ERR_REASON[CYBER_NET_ERR_COUNT] = {
+    "",                 // NONE：不该显示，占位以保持下标对齐
+    "未配置 Wi-Fi",      // NO_CREDS
+    "找不到热点",        // AP_NOT_FOUND
+    "Wi-Fi 密码错误",    // AUTH_FAIL
+    "热点无响应",        // TIMEOUT
+    "服务器无响应",      // SERVER
+    "网络连接失败",      // OTHER
+};
+static const char *const NET_ERR_SUGGEST[CYBER_NET_ERR_COUNT] = {
+    "",
+    "请先配置热点",      // NO_CREDS
+    "请确认热点已开启",  // AP_NOT_FOUND
+    "请检查热点密码",    // AUTH_FAIL
+    "请靠近热点后重试",  // TIMEOUT
+    "请检查网络后重试",  // SERVER
+    "请检查网络后重试",  // OTHER
+};
+
 // 静态断言：查表长度必须覆盖枚举，改枚举忘了改表时编译即失败。
 _Static_assert(sizeof(EMOTION_COLOR) / sizeof(EMOTION_COLOR[0]) == CYBER_EMO_COUNT,
                "EMOTION_COLOR 与 cyber_emotion_t 不同步");
@@ -65,6 +88,10 @@ _Static_assert(sizeof(PAIR_LABEL) / sizeof(PAIR_LABEL[0]) == CYBER_PAIR_COUNT,
                "PAIR_LABEL 与 cyber_pair_state_t 不同步");
 _Static_assert(sizeof(PAIR_COLOR) / sizeof(PAIR_COLOR[0]) == CYBER_PAIR_COUNT,
                "PAIR_COLOR 与 cyber_pair_state_t 不同步");
+_Static_assert(sizeof(NET_ERR_REASON) / sizeof(NET_ERR_REASON[0]) == CYBER_NET_ERR_COUNT,
+               "NET_ERR_REASON 与 cyber_net_err_t 不同步");
+_Static_assert(sizeof(NET_ERR_SUGGEST) / sizeof(NET_ERR_SUGGEST[0]) == CYBER_NET_ERR_COUNT,
+               "NET_ERR_SUGGEST 与 cyber_net_err_t 不同步");
 
 // ---------------------------------------------------------------------------
 // 内部工具
@@ -88,6 +115,16 @@ static void enter_screen(cyber_ui_model_t *m, cyber_screen_t s)
     if (m->screen == s) return;
     m->screen = s;
     m->screen_ms = 0;
+}
+
+// 语音空闲时应停在哪个"静态"屏幕。优先级：网络错误 > 未绑定 > 主界面。
+// 连不上网时先让用户解决网络，而不是把一个"连不上服务端"的激活页摆出来——
+// 后者会让人以为要配对，实际问题是根本没联上网。
+static cyber_screen_t idle_screen(const cyber_ui_model_t *m)
+{
+    if (m->net_err != CYBER_NET_ERR_NONE) return CYBER_SCREEN_NET_ERROR;
+    if (cyber_pair_blocks_ui(m->pair)) return CYBER_SCREEN_ACTIVATION;
+    return CYBER_SCREEN_HOME;
 }
 
 // 切语音状态。离开"说话"态时清掉字幕，避免残字留在下一态的画面上。
@@ -229,24 +266,22 @@ cyber_action_t cyber_model_tick(cyber_ui_model_t *m, uint32_t dt_ms)
             m->boot_gate = CYBER_BOOT_GATE_AUTO;
         }
         if (m->screen_ms >= CYBER_BOOT_MS && m->boot_gate == CYBER_BOOT_GATE_AUTO) {
-            enter_screen(m, cyber_pair_blocks_ui(m->pair) ? CYBER_SCREEN_ACTIVATION
-                                                          : CYBER_SCREEN_HOME);
+            enter_screen(m, idle_screen(m));
         }
         return CYBER_ACT_NONE;
     }
 
-    // 主界面与激活页之间的迁移必须是双向的："绑定已生效"和"服务端现在要求
-    // 激活"都可能在任意时刻到来，哪边来就该切哪边。反方向不是可有可无的：
-    // 用户在控制台解绑后，服务端会重新下发激活码，设备必须回到激活页等用户
-    // 重输码。若只实现"激活页→主界面"，设备会永远停留在它最后知道的那个
-    // "已绑定"状态上，用户看到一个看起来正常的画面，实际需要激活。
-    if (m->screen == CYBER_SCREEN_ACTIVATION) {
-        // 绑定一旦生效就自动放行到主界面：用户在控制台输完码，屏幕上不该再需要任何操作。
-        if (!cyber_pair_blocks_ui(m->pair)) enter_screen(m, CYBER_SCREEN_HOME);
-        return CYBER_ACT_NONE;
-    }
-    if (m->screen == CYBER_SCREEN_HOME && m->voice == CYBER_VOICE_IDLE) {
-        if (cyber_pair_blocks_ui(m->pair)) enter_screen(m, CYBER_SCREEN_ACTIVATION);
+    // 静态屏幕（错误页 / 激活页 / 主界面）之间的迁移必须是双向的：
+    // "绑定已生效""服务端现在要求激活""网络故障""网络恢复"都可能在任意时刻到来，
+    // 哪边来就该切哪边。优先级见 idle_screen——网络错误压过激活页。
+    // 反方向不是可有可无的：用户在控制台解绑后，服务端会重新下发激活码，
+    // 设备必须回到激活页等用户重输码；若只实现单向，设备会永远停在它最后
+    // 知道的那个状态上，用户看到一个看起来正常、实际需要激活的画面。
+    if (m->screen == CYBER_SCREEN_NET_ERROR ||
+        m->screen == CYBER_SCREEN_ACTIVATION ||
+        (m->screen == CYBER_SCREEN_HOME && m->voice == CYBER_VOICE_IDLE)) {
+        const cyber_screen_t want = idle_screen(m);
+        if (m->screen != want) enter_screen(m, want);
         return CYBER_ACT_NONE;
     }
 
@@ -378,6 +413,19 @@ static cyber_action_t activation_button(cyber_ui_model_t *m, cyber_btn_t btn,
     return CYBER_ACT_NONE;
 }
 
+// 网络错误页。长按 OK 重新发起联网（重新解析凭证 / 立刻重连）；短按不做事。
+// 这里不像激活页那样把长按让给"立即省电"：错误页会照常按空闲计时自动降亮/息屏，
+// 不需要手动关屏，而"重试"是这一屏上唯一有价值的动作。
+static cyber_action_t net_error_button(cyber_ui_model_t *m, cyber_btn_t btn,
+                                       cyber_btn_ev_t ev)
+{
+    (void)m;
+    if (ev == CYBER_BTN_EV_LONG && btn == CYBER_BTN_OK) {
+        return CYBER_ACT_RETRY_NET;
+    }
+    return CYBER_ACT_NONE;
+}
+
 cyber_action_t cyber_model_button(cyber_ui_model_t *m, cyber_btn_t btn,
                                   cyber_btn_ev_t ev)
 {
@@ -416,6 +464,8 @@ cyber_action_t cyber_model_button(cyber_ui_model_t *m, cyber_btn_t btn,
         return voice_button(m, btn, ev);
     case CYBER_SCREEN_ACTIVATION:
         return activation_button(m, btn, ev);
+    case CYBER_SCREEN_NET_ERROR:
+        return net_error_button(m, btn, ev);
     case CYBER_SCREEN_BOOT:
     default:
         return CYBER_ACT_NONE;   // 开机动画很短，不做可打断。
@@ -436,6 +486,13 @@ void cyber_model_set_net(cyber_ui_model_t *m, bool connected)
 {
     if (m == NULL) return;
     m->net_connected = connected;
+}
+
+void cyber_model_set_net_err(cyber_ui_model_t *m, cyber_net_err_t err)
+{
+    if (m == NULL) return;
+    // 越界一律当作"没有错误"：宁可漏报一次错误页，也不要越界去查 NET_ERR_* 文案表。
+    m->net_err = (err < CYBER_NET_ERR_COUNT) ? err : CYBER_NET_ERR_NONE;
 }
 
 void cyber_model_set_pair(cyber_ui_model_t *m, cyber_pair_state_t state,
@@ -572,6 +629,34 @@ const char *cyber_model_link_label(const cyber_ui_model_t *m)
 {
     if (m == NULL || !m->net_connected) return "OFFLINE";
     return "AI.LINK";
+}
+
+// ---------------------------------------------------------------------------
+// 网络错误页文案
+// ---------------------------------------------------------------------------
+const char *cyber_net_err_title(void)
+{
+    // 大字英文标题保持赛博像素风（像素字体只有 ASCII），具体原因交给中文行。
+    return "NET ERROR";
+}
+
+const char *cyber_net_err_reason(cyber_net_err_t err)
+{
+    if (err >= CYBER_NET_ERR_COUNT) return NET_ERR_REASON[CYBER_NET_ERR_OTHER];
+    return NET_ERR_REASON[err];
+}
+
+const char *cyber_net_err_suggestion(cyber_net_err_t err)
+{
+    if (err >= CYBER_NET_ERR_COUNT) return NET_ERR_SUGGEST[CYBER_NET_ERR_OTHER];
+    return NET_ERR_SUGGEST[err];
+}
+
+uint32_t cyber_net_err_color(cyber_net_err_t err)
+{
+    (void)err;
+    // 统一故障红：错误页不需要按原因分色，红色本身就是"出问题了"的最强信号。
+    return CYBER_RED;
 }
 
 const char *cyber_voice_label(cyber_voice_state_t s)

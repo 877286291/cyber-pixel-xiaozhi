@@ -203,3 +203,26 @@
 #define CYBER_PAIR_SCAN_HEAD_W  28
 // 亮块左边缘的行程格数（含两端），供 cyber_visor_scan_index 使用。
 #define CYBER_PAIR_SCAN_SPAN    (CYBER_PAIR_SCAN_W - CYBER_PAIR_SCAN_HEAD_W + 1)
+
+// ============================================================================
+// 网络错误页（联网失败时的全屏提示）
+// ============================================================================
+// 大字英文标题保持像素风；"原因"与"建议"两行中文用 cyber_font_cjk 渲染。
+// 整页落在直边安全区内：最上 64px、最下 202px，离 30px 圆角都有富余。
+#define CYBER_NETERR_TITLE_W    224
+#define CYBER_NETERR_TITLE_X    ((CYBER_SCREEN_W - CYBER_NETERR_TITLE_W) / 2)
+#define CYBER_NETERR_TITLE_Y    64
+#define CYBER_NETERR_TITLE_H    24   // = cyber_font_title_lg 的 line_height
+
+// 标题与正文之间的霓虹警示线。
+#define CYBER_NETERR_RULE_X     30
+#define CYBER_NETERR_RULE_W     180
+#define CYBER_NETERR_RULE_Y     104
+#define CYBER_NETERR_RULE_H     2
+
+// 原因行与建议行。cyber_font_cjk 的 line_height 是 30，框高必须 ≥30，否则被裁。
+#define CYBER_NETERR_TEXT_W     224
+#define CYBER_NETERR_TEXT_X     ((CYBER_SCREEN_W - CYBER_NETERR_TEXT_W) / 2)
+#define CYBER_NETERR_REASON_Y   130
+#define CYBER_NETERR_SUGGEST_Y  172
+#define CYBER_NETERR_TEXT_H     30   // = cyber_font_cjk 的 line_height

@@ -1050,6 +1050,72 @@ static void test_home_returns_to_activation_after_unbind(void)
 }
 
 
+// 网络错误页：连不上网时优先于激活页，并给出可读的原因/建议；恢复后自动切回。
+static void test_net_error_page(void)
+{
+    cyber_ui_model_t m;
+
+    // 无凭证：开机动画结束后进错误页，而不是"看起来要配对"的激活页。
+    cyber_model_init(&m);
+    cyber_model_set_pair(&m, CYBER_PAIR_OFFLINE, NULL);
+    cyber_model_set_net_err(&m, CYBER_NET_ERR_NO_CREDS);
+    advance(&m, CYBER_BOOT_MS, 40);
+    assert(m.screen == CYBER_SCREEN_NET_ERROR);
+
+    // 文案：标题恒非空；不同原因给出不同短句；越界与 NONE 都不能读表外。
+    assert(cyber_net_err_title()[0] != '\0');
+    assert(cyber_net_err_reason(CYBER_NET_ERR_NO_CREDS)[0] != '\0');
+    assert(cyber_net_err_suggestion(CYBER_NET_ERR_NO_CREDS)[0] != '\0');
+    assert(strcmp(cyber_net_err_reason(CYBER_NET_ERR_NO_CREDS),
+                  cyber_net_err_reason(CYBER_NET_ERR_AUTH_FAIL)) != 0);
+    assert(strcmp(cyber_net_err_reason(CYBER_NET_ERR_COUNT),
+                  cyber_net_err_reason(CYBER_NET_ERR_OTHER)) == 0);
+    assert(cyber_net_err_reason((cyber_net_err_t)999) != NULL);
+    assert(cyber_net_err_suggestion((cyber_net_err_t)999) != NULL);
+    // 所有原因（NONE 除外）都必须有可读文案，否则屏幕上会出现空白行。
+    for (int i = CYBER_NET_ERR_NONE + 1; i < CYBER_NET_ERR_COUNT; i++) {
+        assert(cyber_net_err_reason((cyber_net_err_t)i)[0] != '\0');
+        assert(cyber_net_err_suggestion((cyber_net_err_t)i)[0] != '\0');
+    }
+
+    // 错误页上：长按 OK = 重发联网；短按无效（不会误触发别的动作）。
+    assert(cyber_model_button(&m, CYBER_BTN_OK, CYBER_BTN_EV_LONG) == CYBER_ACT_RETRY_NET);
+    assert(cyber_model_button(&m, CYBER_BTN_OK, CYBER_BTN_EV_CLICK) == CYBER_ACT_NONE);
+    assert(m.screen == CYBER_SCREEN_NET_ERROR);
+
+    // 网络恢复、但仍需配对 → 回到激活页。
+    cyber_model_set_net_err(&m, CYBER_NET_ERR_NONE);
+    cyber_model_tick(&m, 40);
+    assert(m.screen == CYBER_SCREEN_ACTIVATION);
+
+    // 绑定生效 → 主界面。
+    cyber_model_set_pair(&m, CYBER_PAIR_READY, NULL);
+    cyber_model_tick(&m, 40);
+    assert(m.screen == CYBER_SCREEN_HOME);
+
+    // 已绑定设备中途服务端不可达：错误页要压过主界面；恢复后回主界面。
+    cyber_model_set_net_err(&m, CYBER_NET_ERR_SERVER);
+    cyber_model_tick(&m, 40);
+    assert(m.screen == CYBER_SCREEN_NET_ERROR);
+    cyber_model_set_net_err(&m, CYBER_NET_ERR_NONE);
+    cyber_model_tick(&m, 40);
+    assert(m.screen == CYBER_SCREEN_HOME);
+
+    // 越界错误值一律当"无错误"：不能因为一个坏参数把界面钉在错误页。
+    cyber_model_set_net_err(&m, (cyber_net_err_t)999);
+    assert(m.net_err == CYBER_NET_ERR_NONE);
+    cyber_model_set_net_err(NULL, CYBER_NET_ERR_NO_CREDS);
+    assert(m.screen == CYBER_SCREEN_HOME);
+
+    // 错误页不豁免省电：与激活页不同，它会照常按空闲计时降亮/息屏。
+    cyber_model_set_net_err(&m, CYBER_NET_ERR_NO_CREDS);
+    cyber_model_tick(&m, 40);
+    assert(m.screen == CYBER_SCREEN_NET_ERROR);
+    advance(&m, CYBER_IDLE_DIM_MS, 40);
+    assert(m.idle == CYBER_IDLE_DIM);
+}
+
+
 int main(void)
 {
     test_init_defaults();
@@ -1092,6 +1158,7 @@ int main(void)
     test_activation_returning_from_offline();
     test_test_only_reaches_home();
     test_home_returns_to_activation_after_unbind();
+    test_net_error_page();
 
     printf("test_cyber_ui_model: PASS\n");
     return 0;

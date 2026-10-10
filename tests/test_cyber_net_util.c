@@ -117,6 +117,33 @@ static void test_retry_bump_saturation(void)
     assert(v == CYBER_NET_RETRY_SATURATE);
 }
 
+static void test_classify_reason(void)
+{
+    // 常见原因各自归类（数值 = wifi_err_reason_t），不认识的归 OTHER（不硬套）。
+    assert(cyber_net_classify_reason(201) == CYBER_NET_ERR_AP_NOT_FOUND);  // NO_AP_FOUND
+    assert(cyber_net_classify_reason(202) == CYBER_NET_ERR_AUTH_FAIL);     // AUTH_FAIL
+    assert(cyber_net_classify_reason(15) == CYBER_NET_ERR_AUTH_FAIL);      // 4WAY_HANDSHAKE_TIMEOUT
+    assert(cyber_net_classify_reason(2) == CYBER_NET_ERR_AUTH_FAIL);       // AUTH_EXPIRE
+    assert(cyber_net_classify_reason(4) == CYBER_NET_ERR_AUTH_FAIL);       // ASSOC_EXPIRE
+    assert(cyber_net_classify_reason(200) == CYBER_NET_ERR_TIMEOUT);       // BEACON_TIMEOUT
+    assert(cyber_net_classify_reason(203) == CYBER_NET_ERR_TIMEOUT);       // ASSOC_FAIL
+    assert(cyber_net_classify_reason(204) == CYBER_NET_ERR_TIMEOUT);       // HANDSHAKE_TIMEOUT
+    assert(cyber_net_classify_reason(205) == CYBER_NET_ERR_TIMEOUT);       // CONNECTION_FAIL
+
+    // 0（还没有原因）与不认识的码都不能落进上面几类：错误页宁可说"连接失败"，
+    // 也不要给出一条会被用户照着排查、方向却错了的提示。
+    assert(cyber_net_classify_reason(0) == CYBER_NET_ERR_OTHER);
+    assert(cyber_net_classify_reason(1) == CYBER_NET_ERR_OTHER);
+    assert(cyber_net_classify_reason(210) == CYBER_NET_ERR_OTHER);
+    assert(cyber_net_classify_reason(255) == CYBER_NET_ERR_OTHER);
+
+    // 结果恒在合法枚举范围内（越界会被 UI 当成"无错误"而漏掉整页提示）。
+    for (int r = 0; r <= 255; r++) {
+        const cyber_net_err_t e = cyber_net_classify_reason((uint8_t)r);
+        assert(e > CYBER_NET_ERR_NONE && e < CYBER_NET_ERR_COUNT);
+    }
+}
+
 int main(void)
 {
     test_ssid_valid();
@@ -124,6 +151,7 @@ int main(void)
     test_auth_from_pass();
     test_retry_delay();
     test_retry_bump_saturation();
+    test_classify_reason();
 
     printf("test_cyber_net_util: PASS\n");
     return 0;
