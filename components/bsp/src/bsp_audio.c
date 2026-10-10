@@ -303,11 +303,9 @@ static esp_err_t i2s_full_duplex_init(void) {
     i2s_chan_config_t chan = {
         .id = BSP_I2S_PORT,
         .role = I2S_ROLE_MASTER,
-        // DMA 描述符数。每个描述符承载 dma_frame_num 个立体声帧（240 × 4B = 960B），
-        // 全双工下 TX/RX 各一份，均取自内部 DMA RAM。
-        // 从 6 收到 4 省约 3.8KB，同样是为蓝牙配网腾连续内存（见 sdkconfig.defaults）。
-        // 4 段仍有约 3.8ms 的硬件缓冲余量，对 60ms 一帧的 Opus 语音充裕。
-        .dma_desc_num = 4,
+        // DMA 描述符数。6 是原值；曾试过收到 4 省约 3.8KB，但那属于"改音频硬件行为
+        // 换内存"，与配网所需的内存不成比例，故回退。见 sdkconfig.defaults 的说明。
+        .dma_desc_num = 6,
         .dma_frame_num = 240,
         .auto_clear_after_cb = true,
         .auto_clear_before_cb = false,
@@ -555,6 +553,23 @@ esp_err_t bsp_audio_wake(void) {
 
     s_sleep_result = ESP_OK;
     ESP_LOGI(TAG, "ES8311 已从低功耗状态恢复");
+    return ESP_OK;
+}
+
+esp_err_t bsp_audio_deinit(void) {
+    if (!s_initialized) return ESP_OK;
+    // 记下释放前是否已经打开，便于日志判断状态。
+    const bool was_open = s_opened;
+    audio_cleanup();
+    // audio_delete_codec() 在 codec 接口释放失败时会置 s_codec_release_failed：
+    // 那意味着共享引用可能残留，重建会静默跳过硬件初始化，只能靠重启恢复。
+    if (s_codec_release_failed) {
+        ESP_LOGE(TAG, "音频释放未干净（codec 引用残留），需重启后恢复");
+        return ESP_FAIL;
+    }
+    // 不打堆数字：本文件会被宿主单测编译（tests/test_bsp_audio_recovery.c），
+    // 而 esp_heap_caps.h 只在目标上存在。堆状态由调用方 cyber_audio_suspend() 记录。
+    ESP_LOGI(TAG, "音频通路已释放（原 open=%d）", (int)was_open);
     return ESP_OK;
 }
 

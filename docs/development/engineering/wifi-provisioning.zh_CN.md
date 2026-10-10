@@ -50,23 +50,22 @@ BLE 协议栈初始化约需 **45 KB**，其中 NimBLE host 任务要一块 **4 
 从未运行、从不广播，表现为**手机搜不到设备**（实测 `largest` 仅 3072 < 4096 时
 正是如此）。因此起 BLE 前必须留足连续内存块。
 
-为此项目在**只减缓冲、不改功能**的前提下做了如下收窄，使 `audio ready` 阶段的
-`free/largest` 从 54588/45056 提升到 **63904/55296**（+9.3 KB / +10.2 KB）：
+为此项目在**不改功能、不动网络缓冲**的前提下回收内存。做法是**配网期间释放音频
+通路**：`cyber_audio_suspend()` 会停掉音频 worker（栈 28 KB）并调用
+`bsp_audio_deinit()` 释放 I2S DMA（约 11.5 KB），配网结束再 `cyber_audio_resume()`
+恢复。实测 `largest` 从 43008 提升到 **69632**（+26.6 KB），`btc_init` 后仍有 38912。
 
-| 位置 | 调整 | 备注 |
-| --- | --- | --- |
-| LVGL 显示缓冲 | 40 行 → 28 行 | `BSP_LVGL_DRAW_BUFFER_LINES`，省 5.8 KB |
-| I2S DMA 描述符 | 6 → 4 | 省约 3.8 KB |
-| WiFi 静态 RX 缓冲 | 10 → 4 | 每块约 1.6 KB，省约 9.6 KB |
-| WiFi 动态 RX/TX | 32/32 → 16/16 | |
-| LWIP TCP 收发缓冲 | 5760 → 2880 B | |
-| BT 控制器并发放射 | `BT_CTRL_BLE_MAX_ACT` 6 → 2 | 本应用只做单连接 |
-| NimBLE 内存池 | ACL/EVT/MSYS 按单连接规模收窄 | 都是**整块 calloc**，调太小反而更易失败 |
-| 硬件 AES | 关闭，改软件 AES | 硬件 DMA 路径要 16 B 对齐缓冲，配网时堆碎片化会分配失败 |
+配套的 `BSP_LVGL_DRAW_BUFFER_LINES` 40 → 28 行（省 5.8 KB）保留，它有独立收益。
 
-调整这些值时**必须重新核对配网能启动**（看日志里 `启动 BLE 前` 与 `btc_init 前`
-两行的 `largest` 是否 ≥ 4096）。不要只看 `free`：配网要的是**连续块**，而 LVGL 的
-malloc 池（`CONFIG_LV_MEM_SIZE_KILOBYTES`）是静态数组，缩减它对配网毫无帮助。
+**不要削减 Wi-Fi/TLS 缓冲来腾内存。** 曾把 `ESP_WIFI_DYNAMIC_RX/TX_BUFFER_NUM`
+收到 16、`ESP_WIFI_STATIC_RX_BUFFER_NUM` 收到 4、LWIP TCP 收发缓冲收到 2880B，
+结果**破坏了语音**：实测上行丢帧率从 4% 升到 83%、下行收不到任何帧（收窄 TCP 发送
+缓冲后每帧 Opus 的发送阻塞更久，而上行队列只有 4 帧深 → 队列溢出 → 服务端挂断）。
+这些缓冲是语音链路的硬需求。
+
+调整任何内存项后**必须重新核对配网能启动**（`cyber_prov.c` 里 `btc_init` 前后的
+两行堆日志中 `largest` 需 ≥ 4096）。不要只看 `free`：配网要的是**连续块**，而
+LVGL 的 malloc 池（`CONFIG_LV_MEM_SIZE_KILOBYTES`）是静态数组，缩减它对配网毫无帮助。
 
 ## 参考代码
 

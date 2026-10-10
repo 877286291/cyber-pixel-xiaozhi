@@ -61,25 +61,35 @@ the host never runs and never advertises, which shows up as **the phone not
 finding the device** (observed when `largest` was 3072 < 4096). A contiguous
 block must therefore be available before BLE starts.
 
-The project shrank buffers (no behavior change) to raise `free/largest` at the
-`audio ready` stage from 54588/45056 to **63904/55296** (+9.3 KB / +10.2 KB):
+The project reclaims memory **without changing behavior and without touching the
+network buffers**. The mechanism is to **release the audio path during
+provisioning**: `cyber_audio_suspend()` stops the audio worker (28 KB stack) and
+calls `bsp_audio_deinit()` to free the I2S DMA (~11.5 KB); `cyber_audio_resume()`
+brings it back afterwards. Measured `largest` rises from 43008 to **69632**
+(+26.6 KB), leaving 38912 after `btc_init`.
 
-| Location | Change | Note |
-| --- | --- | --- |
-| LVGL draw buffer | 40 → 28 lines | `BSP_LVGL_DRAW_BUFFER_LINES`, saves 5.8 KB |
-| I2S DMA descriptors | 6 → 4 | saves ~3.8 KB |
-| Wi-Fi static RX buffers | 10 → 4 | each ~1.6 KB, saves ~9.6 KB |
-| Wi-Fi dynamic RX/TX | 32/32 → 16/16 | |
-| LWIP TCP send/window | 5760 → 2880 B | |
-| BT controller concurrent adv | `BT_CTRL_BLE_MAX_ACT` 6 → 2 | the application is single-connection |
-| NimBLE pools | ACL/EVT/MSYS sized for a single connection | all are **single whole-buffer callocs**; too small is worse |
-| Hardware AES | disabled (software AES) | the HW DMA path needs 16-byte-aligned buffers and fails when the heap is fragmented during provisioning |
+The `BSP_LVGL_DRAW_BUFFER_LINES` change (40 → 28 lines, 5.8 KB) is kept: it has
+independent value.
 
-After changing any of these, **re-verify that provisioning starts** (check that
-`largest` is at least 4096 in the two heap log lines printed right before BLE
-starts; see `cyber_prov.c`). Do not look only at `free`: provisioning needs a
-**contiguous block**, and LVGL's malloc pool (`CONFIG_LV_MEM_SIZE_KILOBYTES`) is
-a static array, so shrinking it does not help provisioning at all.
+**Do not shrink the Wi-Fi/TLS buffers to make room.** Trimming
+`ESP_WIFI_DYNAMIC_RX/TX_BUFFER_NUM` to 16, `ESP_WIFI_STATIC_RX_BUFFER_NUM` to 4,
+and the LWIP TCP send/window buffers to 2880 B **broke voice**: the measured
+uplink drop rate went from 4% to 83% and no downlink frames arrived (a smaller
+TCP send buffer makes each Opus frame block longer, and the 4-deep uplink queue
+overflows, so the server hangs up). Those buffers are a hard requirement of the
+voice path.
+
+After changing any memory item, **re-verify that provisioning starts** (the
+`largest` in the two heap lines around `btc_init` in `cyber_prov.c` must be at
+least 4096). Do not look only at `free`: provisioning needs a **contiguous
+block**, and LVGL's malloc pool (`CONFIG_LV_MEM_SIZE_KILOBYTES`) is a static
+array, so shrinking it does not help provisioning at all.
+
+Kept trims that are BLE-only or otherwise safe: `BT_CTRL_BLE_MAX_ACT` 6 → 2, the
+NimBLE pools sized for a single connection (all are single whole-buffer callocs,
+so too small is worse), and hardware AES disabled in favor of software AES (the
+hardware DMA path needs 16-byte-aligned buffers that the fragmented heap cannot
+provide during provisioning).
 
 ## Reference code
 

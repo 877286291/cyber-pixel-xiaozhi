@@ -10,6 +10,14 @@
 // 失败会释放本次已创建的 codec 接口和 I2S channel，修正故障后可重试。
 esp_err_t bsp_audio_init(void);
 
+// 释放 codec 与 I2S（含 DMA 缓冲），把内部 RAM 还给系统。用于"配网期间释放音频通路"：
+// BLE 协议栈初始化需要约 60KB 连续内存，而本板无 PSRAM，音频通路（I2S DMA 约 11.5KB）
+// 在配网时完全无用。释放后可再调 bsp_audio_init() 恢复。
+//
+// 返回非 ESP_OK 表示底层释放失败（esp_codec_dev 的引用计数可能残留），此时【不能】
+// 假装成功——必须重启设备恢复，否则后续 init 可能静默跳过硬件初始化。
+esp_err_t bsp_audio_deinit(void);
+
 // 设置采样格式。同格式重复调用是廉价的(直接复用已打开的 codec)。
 //
 // ⚠ 这里有个必须绕开的坑:esp_codec_dev_open() 在 codec【已打开】时会直接返回 OK 且

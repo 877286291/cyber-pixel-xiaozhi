@@ -64,6 +64,9 @@ static cyber_audio_format_t s_downlink;           // 当前生效的下行格式
 // 外部（LVGL 任务）写、worker 读。volatile 是必须的：worker 里的采集/播放循环
 // 靠它来判断"该不该继续"，若被编译器提到循环外，一次采集就会永不退出。
 static volatile cyber_audio_phase_t s_phase;
+// 配网期间挂起音频通路：worker 看到它即退出，随后释放 codec/I2S（见 suspend/resume）。
+// volatile 与 s_phase 同理：由 LVGL 任务写、worker 读，不能被优化进寄存器。
+static volatile bool s_suspend;
 static cyber_audio_queue_t s_rx_q;                // 播放帧（SPSC）
 static cyber_audio_tx_fn s_tx_sink;
 static TaskHandle_t s_task;
@@ -340,6 +343,10 @@ static void audio_task(void *arg)
     cyber_audio_phase_t prev = CYBER_AUDIO_IDLE;
 
     for (;;) {
+        // 挂起请求（配网期间释放内存）：先在循环顶部退出，再由 cyber_audio_suspend()
+        // 释放句柄与硬件。放在这里而不是循环中部，是为了保证采集/播放的临界区不被截断。
+        if (s_suspend) break;
+
         const cyber_audio_phase_t phase = s_phase;
 
         if (prev != phase) {
@@ -386,6 +393,13 @@ static void audio_task(void *arg)
             break;
         }
     }
+
+    // 挂起路径（上方 break）：把这一轮可能仍挂着的编解码器还给系统，再结束任务。
+    // 先清 s_task 再删自己——cyber_audio_suspend() 靠轮询 s_task 判断任务已退出。
+    release_encoder();
+    release_decoder();
+    s_task = NULL;
+    vTaskDelete(NULL);
 }
 
 // ---------------------------------------------------------------------------
@@ -519,4 +533,59 @@ esp_err_t cyber_audio_init(void)
              (unsigned)esp_get_free_heap_size(),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
     return ESP_OK;
+}
+
+esp_err_t cyber_audio_suspend(void)
+{
+    // 已挂起或从未就绪：直接成功（幂等）。
+    if (!s_ready) return ESP_OK;
+
+    // 1) 让 worker 退出。先切到 IDLE，避免它正停在采集/播放的阻塞读写里。
+    s_phase = CYBER_AUDIO_IDLE;
+    s_suspend = true;
+
+    // 2) 等 worker 真的退出（它清 s_task 后自删）。超时则放弃释放并恢复运行——
+    //    宁可少省内存，也不要留下一个仍在跑的任务而把句柄/硬件释放掉。
+    for (int i = 0; i < 100 && s_task != NULL; i++) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    if (s_task != NULL) {
+        ESP_LOGE(TAG, "音频 worker 未在超时内退出，放弃挂起");
+        s_suspend = false;
+        s_phase = CYBER_AUDIO_IDLE;
+        return ESP_ERR_TIMEOUT;
+    }
+
+    // 3) 释放编解码器与硬件。I2S 的 DMA 缓冲是这里省下的主要一块。
+    release_encoder();
+    release_decoder();
+    const esp_err_t err = bsp_audio_deinit();
+
+    // 4) 先置 s_ready=false，让并发的 push/stats 调用立刻退出；worker 已停，此时
+    //    只可能来自 WS 事件任务的 push，它靠 s_ready 这道闸挡住。
+    s_ready = false;
+    s_inited = false;
+
+    // 5) 归还队列与锁，并把状态复位成"未初始化"：resume 就是一次干净的 init。
+    if (s_cfg_lock != NULL) {
+        vSemaphoreDelete(s_cfg_lock);
+        s_cfg_lock = NULL;
+    }
+    cyber_audio_queue_reset(&s_rx_q);
+    s_codec_hz = -1;
+    s_phase = CYBER_AUDIO_IDLE;
+    s_suspend = false;
+
+    ESP_LOGI(TAG, "音频通路已挂起（err=%s），free=%u largest=%u",
+             esp_err_to_name(err),
+             (unsigned)esp_get_free_heap_size(),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    return err;
+}
+
+esp_err_t cyber_audio_resume(void)
+{
+    // 挂起把 s_inited/s_ready 复位成初始值，所以这里就是一次全新的 init；
+    // 未挂起时它是幂等的空操作。
+    return cyber_audio_init();
 }

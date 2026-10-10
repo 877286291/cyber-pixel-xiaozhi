@@ -91,18 +91,15 @@ CONFIG_MBEDTLS_HARDWARE_AES=n
 # 4KB 任务栈 + 结构体放不下（实测 nimble_port_init 后 free 仅 5588 / largest 5120）。
 # 以下三项都是从"减少常驻缓冲"入手挤出空间，不改功能行为。
 #
-# WiFi 动态缓冲上限。它们是按需分配、用完即还，但上限决定了极端情况下能占多少，
-# 也影响堆的碎片形态。本应用是语音助手（24 kbps Opus + 小 JSON），16 足够；
-# 注意动态 RX 不得小于静态 RX（见 STATIC_RX_BUFFER_NUM）。
-CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
-CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=16
-# WiFi 静态 RX 缓冲。这些是【init 时一次性常驻】的（每个约 1.6KB），
-# 10 个就是约 16KB —— 这是我们能收回的最大一块常驻内存。4 个对语音助手足够。
-CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4
-# LWIP TCP 收发缓冲。默认各 5760B，是按"高吞吐"给的；本应用上下行都只有
-# 24 kbps 的 Opus 与小 JSON，2880B 仍有充足余量（TLS 记录会被分片）。
-CONFIG_LWIP_TCP_SND_BUF_DEFAULT=2880
-CONFIG_LWIP_TCP_WND_DEFAULT=2880
+# ★ WiFi/TLS 缓冲维持 IDF 默认值，不要为省内存而收窄。
+# 曾把 DYNAMIC_RX/TX 收到 16、STATIC_RX 收到 4、LWIP TCP 收发缓冲收到 2880B，
+# 结果【破坏了语音】——实测上行丢帧率从 4% 飙到 83%、下行收不到任何帧：
+#   CW2017 ... 音频：上行 96 帧 丢 4（收窄前）  →  上行 170 帧 丢 807（收窄后）
+# 收窄 TCP 发送缓冲后，每帧 Opus 的发送会阻塞更久，而上行队列只有 4 帧深，
+# 于是队列溢出、服务端收不到完整语音并挂断。
+# 结论：这些缓冲是语音链路的硬需求，不能动。配网所需的连续内存改用
+# cyber_audio/bsp_audio 的"配网期间释放音频通路"来腾出（见 cyber_prov.c 与
+# docs/development/engineering/wifi-provisioning.md 的内存预算一节）。
 # BT 控制器的并发活动数。默认 6 是按"多连接/多广播"预留的，而本应用只做
 # 单连接的 BLE peripheral（配网），2 已够用；控制器 RAM 直接随它增长。
 CONFIG_BT_CTRL_BLE_MAX_ACT=2

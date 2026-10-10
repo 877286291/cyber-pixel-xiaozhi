@@ -46,6 +46,17 @@ typedef bool (*cyber_audio_tx_fn)(const void *opus, size_t len);
 // 失败时返回具体错误，调用方应记录并放弃音频（文本通路不依赖它，仍可工作）。
 esp_err_t cyber_audio_init(void);
 
+// 挂起音频通路：停掉 worker 任务并释放 codec/I2S，把内部 RAM 还给系统。
+// 【用途】蓝牙配网：BLE 协议栈初始化需要约 60KB 连续内存，而本板无 PSRAM；
+// 音频通路在配网期间完全用不上，释放它换来的 RAM 比削减网络缓冲更划算——
+// 后者会破坏语音链路（实测上行丢帧率由 4% 升到 83%）。
+// 挂起期间所有对外接口退化为空操作（与"init 之前"同一套 s_ready 判据）。
+// 幂等；未就绪或已挂起时返回 ESP_OK。
+esp_err_t cyber_audio_suspend(void);
+
+// 恢复音频通路：等同再调一次 cyber_audio_init()。挂起后必须调它才能重新出声。
+esp_err_t cyber_audio_resume(void);
+
 // 除 init 外的所有接口都可以在【init 之前或 init 失败之后】被安全调用：它们会直接
 // 返回（get_stats 返回全 0）。这不是可选的宽容度——tick_cb 从建屏那一刻就开始跳，
 // 一定早于 init，而 xSemaphoreTake(NULL) 在这套 IDF 里会直接 assert 崩溃。

@@ -270,14 +270,19 @@ static void apply_action(app_ctx_t *ctx, cyber_action_t act)
         // 错误页短按进配网。置位请求后再真的起 BLE：界面按请求值切屏，
         // BLE 起不来时停在配网页显示失败，而不是"按了没反应"。
         s_prov_requested = true;
+        // 先释放音频通路再起 BLE：BLE 协议栈要约 60KB 连续内存，而音频通路
+        // （worker 栈 28KB + I2S DMA ~11.5KB）在配网期间完全用不到。这是为配网
+        // 腾内存的【正确】来源——削减 WiFi/TLS 缓冲会破坏语音（实测丢帧率 4%→83%）。
+        (void)cyber_audio_suspend();
         if (cyber_prov_start() != ESP_OK) {
             ESP_LOGE(TAG, "蓝牙配网启动失败；配网页将显示失败状态");
         }
         break;
     case CYBER_ACT_PROV_STOP:
-        // 配网页长按退出：拆掉 BLE 栈并把 RAM 还给系统。
+        // 配网页长按退出：拆掉 BLE 栈并把 RAM 还给系统，随后恢复音频。
         s_prov_requested = false;
         (void)cyber_prov_stop();
+        (void)cyber_audio_resume();
         break;
     case CYBER_ACT_NONE:
     default:
@@ -359,6 +364,8 @@ static void tick_cb(lv_timer_t *timer)
         ESP_LOGI(TAG, "配网成功（IP %s），自动退出配网", (ns.ip[0] != '\0') ? ns.ip : "?");
         s_prov_requested = false;
         (void)cyber_prov_stop();
+        // 恢复配网期间释放的音频通路，否则配网后说不出话。
+        (void)cyber_audio_resume();
         cyber_prov_get_status(&pst);   // 退出后状态已变，重新取一次再写模型
     }
     cyber_model_set_prov(&ctx->model, s_prov_requested, &pst, ns.ip);
