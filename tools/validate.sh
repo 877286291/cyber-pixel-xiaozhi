@@ -34,12 +34,17 @@ run_static_checks() {
     "${test_dir}/test_demo_navigation"
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
         tests/test_cyber_ui_model.c main/cyber_ui_model.c \
+        main/cyber_prov_util.c main/cyber_net_util.c \
         -o "${test_dir}/test_cyber_ui_model"
     "${test_dir}/test_cyber_ui_model"
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
         tests/test_cyber_net_util.c main/cyber_net_util.c \
         -o "${test_dir}/test_cyber_net_util"
     "${test_dir}/test_cyber_net_util"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_cyber_prov_util.c main/cyber_prov_util.c main/cyber_net_util.c \
+        -o "${test_dir}/test_cyber_prov_util"
+    "${test_dir}/test_cyber_prov_util"
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
         tests/test_cyber_ota_util.c main/cyber_ota_util.c \
         -o "${test_dir}/test_cyber_ota_util"

@@ -61,6 +61,7 @@ struct cyber_ui {
     lv_obj_t *voice_page;
     lv_obj_t *pair_page;
     lv_obj_t *net_err_page;
+    lv_obj_t *prov_page;
 
     // 共用状态栏（电量固定右上角）
     lv_obj_t *link_label;
@@ -104,6 +105,13 @@ struct cyber_ui {
     lv_obj_t *ne_reason;
     lv_obj_t *ne_suggest;
 
+    // 蓝牙配网页
+    lv_obj_t *pv_title;
+    lv_obj_t *pv_rule;
+    lv_obj_t *pv_name;
+    lv_obj_t *pv_state;
+    lv_obj_t *pv_detail;
+
     // 上次已应用值：用于跳过无变化的重设
     struct {
         bool valid;
@@ -120,6 +128,8 @@ struct cyber_ui {
         int pair_scan;
         char subtitle[CYBER_SUBTITLE_MAX + 1];
         cyber_net_err_t net_err;
+        cyber_prov_state_t prov_state;
+        char prov_detail[48];
     } applied;
 };
 
@@ -304,7 +314,11 @@ static const char *hint_for(const cyber_ui_model_t *m)
         }
     case CYBER_SCREEN_NET_ERROR:
         // 文案长度上限受 CYBER_HINT_W 约束（sm 字体 7px/字符，208px ≈ 28 字符）。
-        return "HOLD OK RETRY";
+        // 短按进配网、长按重试——两个动作都要写出来，否则用户不知道还能配网。
+        return "OK PAIR  HOLD OK RETRY";
+    case CYBER_SCREEN_PROVISION:
+        // 配网流程由手机驱动，设备侧只有"退出"这一个动作。
+        return "HOLD OK EXIT";
     case CYBER_SCREEN_HOME:
     default:
         // 短按 UP/DOWN 调音量，长按调亮度（设备级键，语音页同样生效）。
@@ -528,6 +542,41 @@ static void build_net_error_page(cyber_ui_t *ui)
 }
 
 // ---------------------------------------------------------------------------
+// 蓝牙配网页
+// ---------------------------------------------------------------------------
+// 自上而下：标题 → 霓虹线 → 广播名 → 阶段 → 中文说明。
+// 中文行必须用 cyber_font_cjk：像素字体没有汉字，拿它渲染会缺字成占位框。
+// 控件数 5 个，与其他页同一套省内存的取舍。
+static void build_provision_page(cyber_ui_t *ui)
+{
+    lv_obj_t *page = make_page(ui->screen);
+    ui->prov_page = page;
+    if (page == NULL) return;
+
+    ui->pv_title = make_label(page, &cyber_font_title, CYBER_CYAN);
+    lv_label_set_text(ui->pv_title, "PROVISION");
+    place_label(ui->pv_title, CYBER_PROV_TITLE_X, CYBER_PROV_TITLE_Y,
+                CYBER_PROV_TITLE_W, CYBER_PROV_TITLE_H, LV_TEXT_ALIGN_CENTER);
+
+    ui->pv_rule = make_neon_rule(page, CYBER_PROV_RULE_X, CYBER_PROV_RULE_Y,
+                                 CYBER_PROV_RULE_W, CYBER_PROV_RULE_H);
+
+    // 广播名：用户要在手机里选中的那个设备，必须写出来，否则扫到一堆设备不知道选哪个。
+    ui->pv_name = make_label(page, &cyber_font_sm, CYBER_AMBER);
+    lv_label_set_text(ui->pv_name, cyber_model_prov_name());
+    place_label(ui->pv_name, CYBER_PROV_NAME_X, CYBER_PROV_NAME_Y,
+                CYBER_PROV_NAME_W, CYBER_PROV_NAME_H, LV_TEXT_ALIGN_CENTER);
+
+    ui->pv_state = make_label(page, &cyber_font_md, CYBER_CYAN);
+    place_label(ui->pv_state, CYBER_PROV_STATE_X, CYBER_PROV_STATE_Y,
+                CYBER_PROV_STATE_W, CYBER_PROV_STATE_H, LV_TEXT_ALIGN_CENTER);
+
+    ui->pv_detail = make_label(page, &cyber_font_cjk, CYBER_TEXT);
+    place_label(ui->pv_detail, CYBER_PROV_DETAIL_X, CYBER_PROV_DETAIL_Y,
+                CYBER_PROV_DETAIL_W, CYBER_PROV_DETAIL_H, LV_TEXT_ALIGN_CENTER);
+}
+
+// ---------------------------------------------------------------------------
 // 建/删
 // ---------------------------------------------------------------------------
 cyber_ui_t *cyber_ui_create(void)
@@ -554,6 +603,7 @@ cyber_ui_t *cyber_ui_create(void)
     build_voice_page(ui);
     build_activation_page(ui);
     build_net_error_page(ui);
+    build_provision_page(ui);
     build_statusbar(ui);
     build_hint(ui);
     ui->glitch = cyber_glitch_create(ui->screen, CYBER_SCREEN_W, CYBER_SCREEN_H);
@@ -562,6 +612,7 @@ cyber_ui_t *cyber_ui_create(void)
     set_hidden(ui->voice_page, true);
     set_hidden(ui->pair_page, true);
     set_hidden(ui->net_err_page, true);
+    set_hidden(ui->prov_page, true);
 
     lv_screen_load(ui->screen);
     return ui;
@@ -594,6 +645,7 @@ void cyber_ui_apply(cyber_ui_t *ui, const cyber_ui_model_t *m)
         set_hidden(ui->voice_page, m->screen != CYBER_SCREEN_VOICE);
         set_hidden(ui->pair_page, m->screen != CYBER_SCREEN_ACTIVATION);
         set_hidden(ui->net_err_page, m->screen != CYBER_SCREEN_NET_ERROR);
+        set_hidden(ui->prov_page, m->screen != CYBER_SCREEN_PROVISION);
     }
 
     // --- 状态栏 ---
@@ -726,6 +778,30 @@ void cyber_ui_apply(cyber_ui_t *ui, const cyber_ui_model_t *m)
             const uint32_t color = cyber_net_err_color(m->net_err);
             lv_obj_set_style_text_color(ui->ne_title, lv_color_hex(color), LV_PART_MAIN);
             lv_obj_set_style_text_color(ui->ne_reason, lv_color_hex(color), LV_PART_MAIN);
+        }
+    }
+
+    // --- 蓝牙配网页 ---
+    if (m->screen == CYBER_SCREEN_PROVISION) {
+        // screen_changed 必须参与判定：从错误页切进来时 prov 往往已经等于模型当前值，
+        // 少了这一项阶段标签与说明行会一次都不写。
+        const cyber_prov_state_t pv = cyber_model_prov_state(m);
+        const char *detail = cyber_model_prov_detail(m);
+        if (first || screen_changed || ui->applied.prov_state != pv ||
+            strcmp(ui->applied.prov_detail, detail) != 0) {
+            lv_label_set_text(ui->pv_state, cyber_prov_state_label(pv));
+            lv_label_set_text(ui->pv_detail, detail);
+
+            // 颜色按阶段给：进行中青、成功青柠、失败红。用户扫一眼颜色就知道进展。
+            uint32_t color = CYBER_CYAN;
+            if (pv == CYBER_PROV_WIFI_CONNECTED) color = CYBER_LIME;
+            else if (pv == CYBER_PROV_FAILED) color = CYBER_RED;
+            else if (pv == CYBER_PROV_WIFI_CONNECTING) color = CYBER_AMBER;
+            lv_obj_set_style_text_color(ui->pv_state, lv_color_hex(color), LV_PART_MAIN);
+
+            ui->applied.prov_state = pv;
+            strncpy(ui->applied.prov_detail, detail, sizeof(ui->applied.prov_detail) - 1u);
+            ui->applied.prov_detail[sizeof(ui->applied.prov_detail) - 1u] = '\0';
         }
     }
 

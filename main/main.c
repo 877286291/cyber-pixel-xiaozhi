@@ -20,6 +20,7 @@
 #include "cyber_audio.h"
 #include "cyber_net.h"
 #include "cyber_ota.h"
+#include "cyber_prov.h"
 #include "cyber_theme.h"
 #include "cyber_ui.h"
 #include "cyber_ui_model.h"
@@ -180,6 +181,14 @@ static volatile bool s_net_connected;
 // 它决定开机页要不要等：没有客户端就没有"首个结果"可等。
 static volatile bool s_ota_up;
 
+// 用户是否请求了蓝牙配网（由错误页短按 OK 置位、配网页长按 OK 清零）。
+//
+// 为什么由 main.c 拥有而不是让模型自己置位：配网是"跨模块的请求"（要真的去起 BLE
+// 栈），模型只该表达"想不想显示那一屏"。active 用这个请求值而不是 cyber_prov_is_active()，
+// 是为了在 BLE 起不来时也停在配网页并显示 PAIR FAILED——直接弹回错误页会让用户
+// 完全看不出刚才发生了什么。
+static volatile bool s_prov_requested;
+
 // 启动流程是否已经走完（app_main 末尾置位）。
 //
 // 为什么需要它：建屏与建 LVGL 定时器发生在 app_main 中段，而 NVS / Wi-Fi / 激活
@@ -257,6 +266,19 @@ static void apply_action(app_ctx_t *ctx, cyber_action_t act)
         // 错误页长按重试：重新解析凭证 / 立刻重连。非阻塞（内部只发一次连接请求）。
         (void)cyber_net_kick();
         break;
+    case CYBER_ACT_PROV_START:
+        // 错误页短按进配网。置位请求后再真的起 BLE：界面按请求值切屏，
+        // BLE 起不来时停在配网页显示失败，而不是"按了没反应"。
+        s_prov_requested = true;
+        if (cyber_prov_start() != ESP_OK) {
+            ESP_LOGE(TAG, "蓝牙配网启动失败；配网页将显示失败状态");
+        }
+        break;
+    case CYBER_ACT_PROV_STOP:
+        // 配网页长按退出：拆掉 BLE 栈并把 RAM 还给系统。
+        s_prov_requested = false;
+        (void)cyber_prov_stop();
+        break;
     case CYBER_ACT_NONE:
     default:
         break;
@@ -327,6 +349,19 @@ static void tick_cb(lv_timer_t *timer)
     cyber_net_status_t ns;
     cyber_net_get_status(&ns);
     cyber_model_set_net_err(&ctx->model, classify_net_error(&ota, net, &ns));
+
+    // 5c) 蓝牙配网：把 BLE/Wi-Fi 两侧的事实快照写进模型（界面只读消费）。
+    //     配网一旦连上热点就自动退出——让 BLE 尽早拆栈把 RAM 还给系统，
+    //     这对无 PSRAM 且要跑 Opus 的 C3 是必要的，也避免用户走后 BLE 一直空转。
+    cyber_prov_status_t pst;
+    cyber_prov_get_status(&pst);
+    if (s_prov_requested && pst.wifi_connected) {
+        ESP_LOGI(TAG, "配网成功（IP %s），自动退出配网", (ns.ip[0] != '\0') ? ns.ip : "?");
+        s_prov_requested = false;
+        (void)cyber_prov_stop();
+        cyber_prov_get_status(&pst);   // 退出后状态已变，重新取一次再写模型
+    }
+    cyber_model_set_prov(&ctx->model, s_prov_requested, &pst, ns.ip);
 
     // 放开开机页。三种情况都该放：
     //   1) OTA 有结论了 —— 这是常态路径，也是这次改动的目的：开机动画一直演到

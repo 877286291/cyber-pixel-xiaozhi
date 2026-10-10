@@ -38,6 +38,11 @@ idf_component_register(
          "cyber_ws.c"
          "cyber_audio_util.c"
          "cyber_audio.c"
+         # 蓝牙配网：cyber_prov（BLE + BLUFI 协议）+ 纯逻辑 + 安全协商。
+         # Wi-Fi 与凭证持久化仍归 cyber_net，配网只是借用它的栈（见 cyber_prov.h）。
+         "cyber_prov_util.c"
+         "cyber_prov_security.c"
+         "cyber_prov.c"
          "${CYBER_FONT_DIR}/cyber_font_sm.c"
          "${CYBER_FONT_DIR}/cyber_font_md.c"
          "${CYBER_FONT_DIR}/cyber_font_title.c"
@@ -52,6 +57,9 @@ idf_component_register(
     REQUIRES bsp nvs_flash esp_wifi esp_netif esp_event esp_timer
              esp_http_client esp-tls mbedtls spi_flash
              esp_websocket_client espressif__esp_audio_codec
+             # 蓝牙配网：NimBLE + BLUFI（bt 组件提供两者），mbedtls 用于 BLUFI 的
+             # DH/AES 安全协商。
+             bt
 )
 
 # lv_font_conv emits either "lvgl.h" or "lvgl/lvgl.h" depending on this macro.

@@ -226,3 +226,35 @@
 #define CYBER_NETERR_REASON_Y   130
 #define CYBER_NETERR_SUGGEST_Y  172
 #define CYBER_NETERR_TEXT_H     30   // = cyber_font_cjk 的 line_height
+
+// ============================================================================
+// 蓝牙配网页
+// ============================================================================
+// 自上而下：标题 → 霓虹线 → 广播名 → 阶段 → 中文说明。整页落在直边安全区内。
+#define CYBER_PROV_TITLE_W      224
+#define CYBER_PROV_TITLE_X      ((CYBER_SCREEN_W - CYBER_PROV_TITLE_W) / 2)
+#define CYBER_PROV_TITLE_Y      64
+#define CYBER_PROV_TITLE_H      16   // = cyber_font_title 的 line_height
+
+#define CYBER_PROV_RULE_X       30
+#define CYBER_PROV_RULE_W       180
+#define CYBER_PROV_RULE_Y       90
+#define CYBER_PROV_RULE_H       2
+
+// 广播名：用户要在手机里选中的那个设备叫什么，必须写出来。
+#define CYBER_PROV_NAME_W       224
+#define CYBER_PROV_NAME_X       ((CYBER_SCREEN_W - CYBER_PROV_NAME_W) / 2)
+#define CYBER_PROV_NAME_Y       106
+#define CYBER_PROV_NAME_H       9    // = cyber_font_sm 的 line_height
+
+// 阶段标签（英文，像素字体）。
+#define CYBER_PROV_STATE_W      224
+#define CYBER_PROV_STATE_X      ((CYBER_SCREEN_W - CYBER_PROV_STATE_W) / 2)
+#define CYBER_PROV_STATE_Y      130
+#define CYBER_PROV_STATE_H      18   // = cyber_font_md 的 line_height
+
+// 中文说明行（含 IP 读数）。cjk 字体的 line_height 是 30。
+#define CYBER_PROV_DETAIL_W     224
+#define CYBER_PROV_DETAIL_X     ((CYBER_SCREEN_W - CYBER_PROV_DETAIL_W) / 2)
+#define CYBER_PROV_DETAIL_Y     162
+#define CYBER_PROV_DETAIL_H     30   // = cyber_font_cjk 的 line_height

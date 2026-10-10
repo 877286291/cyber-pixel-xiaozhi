@@ -2,6 +2,7 @@
 // Wi-Fi STA 联网层的实现。所有 esp_* 调用集中在这里；判断逻辑在 cyber_net_util.c。
 #include "cyber_net.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "esp_event.h"
@@ -52,9 +53,27 @@ typedef struct {
     bool connected;
     bool have_creds;           // 上次 start 时是否解析到可用凭证（错误页据此区分"没配置"）
     uint8_t last_reason;       // 最近一次断开/失败的 Wi-Fi reason 码（错误页据此给出原因）
+    char ip[16];               // 已获取的 IPv4 字符串；未连接时为 ""
 } cyber_net_ctx_t;
 
 static cyber_net_ctx_t s_net;
+
+// ---------------------------------------------------------------------------
+// 配网模式
+// ---------------------------------------------------------------------------
+// 配网期间设备本来就没有可用凭证，若仍走常规路径，"连接失败→退避→重试"会刷屏，
+// 且可能与扫描互相干扰。这个标志只影响两条自动行为：STA_START 的自动连接、
+// 以及 STA_DISCONNECTED 的退避重连——扫描与手动连接不受影响。
+static bool s_prov_mode;
+
+// 扫描结果回调只能在事件循环任务里调用，故只存一个，不排队。
+static cyber_net_scan_cb_t s_scan_cb;
+static void *s_scan_ctx;
+
+// 扫描结果的定长缓冲。刻意用静态数组而不是每次 malloc：扫描是串行的，且这段代码
+// 跑在事件循环任务上，能不在那里做堆分配就不做。上限与配网页列出的 AP 数一致。
+#define CYBER_NET_SCAN_MAX 16
+static wifi_ap_record_t s_scan_recs[CYBER_NET_SCAN_MAX];
 
 // ---------------------------------------------------------------------------
 // 内存埋点
@@ -187,22 +206,52 @@ static void wifi_evt_cb(void *arg, esp_event_base_t base, int32_t id, void *data
 
     switch (id) {
     case WIFI_EVENT_STA_START:
-        // 栈已就绪，可以发起连接。
-        (void)esp_wifi_connect();
+        // 栈已就绪，可以发起连接。配网模式下不自动连：此时没有可用凭证，
+        // 连了只会立刻失败并触发一轮无意义的退避。
+        if (!s_prov_mode) {
+            (void)esp_wifi_connect();
+        }
         break;
 
     case WIFI_EVENT_STA_CONNECTED:
         ESP_LOGI(TAG, "已关联 AP，等待 DHCP");
         break;
 
+    case WIFI_EVENT_SCAN_DONE: {
+        // 扫描结果只在此刻有效：取到缓冲后立刻回调，回调返回即失效。
+        // 无论有没有回调都要把驱动侧的记录取走，否则下一次扫描会返回
+        // "still scanning" 或拿到陈旧结果。
+        uint16_t n = CYBER_NET_SCAN_MAX;
+        const esp_err_t err = esp_wifi_scan_get_ap_records(&n, s_scan_recs);
+        const cyber_net_scan_cb_t cb = s_scan_cb;
+        void *ctx = s_scan_ctx;
+        s_scan_cb = NULL;
+        s_scan_ctx = NULL;
+        if (cb != NULL) {
+            if (err == ESP_OK) {
+                cb(s_scan_recs, (unsigned)n, ctx);
+            } else {
+                // 取记录失败：以 count=0 回调，让上层回一个"扫描失败"而不是干等。
+                ESP_LOGW(TAG, "读取扫描结果失败: %s", esp_err_to_name(err));
+                cb(NULL, 0u, ctx);
+            }
+        }
+        break;
+    }
+
     case WIFI_EVENT_STA_DISCONNECTED: {
         const wifi_event_sta_disconnected_t *d =
             (const wifi_event_sta_disconnected_t *)data;
         // 只打 reason 码不打密码：reason 是排查"密码错/信号弱"的关键信息。
         s_net.last_reason = (d != NULL) ? d->reason : 0u;
+        s_net.ip[0] = '\0';   // 断开后 IP 不再代表现状
         ESP_LOGW(TAG, "断开 (reason=%d)", (d != NULL) ? (int)d->reason : -1);
         notify(false);
-        schedule_retry();
+        // 配网模式下不重连：此刻的断开是预期内的（还没配好网），
+        // 按退避重试只会把日志刷满，并可能在扫描时抢走射频。
+        if (!s_prov_mode) {
+            schedule_retry();
+        }
         break;
     }
 
@@ -220,6 +269,8 @@ static void ip_evt_cb(void *arg, esp_event_base_t base, int32_t id, void *data)
     const ip_event_got_ip_t *ev = (const ip_event_got_ip_t *)data;
     if (ev != NULL) {
         ESP_LOGI(TAG, "已获取 IP: " IPSTR, IP2STR(&ev->ip_info.ip));
+        // 存下点分十进制串：配网页要把它显示出来，作为"确实配成功了"的证据。
+        snprintf(s_net.ip, sizeof(s_net.ip), IPSTR, IP2STR(&ev->ip_info.ip));
     }
     s_net.attempts = 0;   // 连上了就清空退避，下次断开从最短间隔重试
     s_net.last_reason = 0;   // 连上了，上一次失败的原因不再代表现状
@@ -310,15 +361,15 @@ fail:
     return err;
 }
 
-esp_err_t cyber_net_start(void)
+// 用当前凭证（开发覆盖头优先，其次 NVS）配置 STA。不启动、不连接。
+// 抽出来是为了让"常规启动"与"配网提交"共用同一套配置逻辑：两处各写一份必然漂移，
+// 而漂移的表现是"配网存进去的密码，常规路径连不上"，最难查。
+static esp_err_t apply_sta_config(void)
 {
-    if (!s_net.inited) return ESP_ERR_INVALID_STATE;
-    if (s_net.started) return ESP_ERR_INVALID_STATE;
-
     cyber_creds_t creds;
     if (!resolve_creds(&creds)) {
         // 没有凭证不是故障：设备照常开机，界面显示 OFFLINE，
-        // 等后续配网功能补上凭证再 start。
+        // 等配网功能补上凭证再 start。
         s_net.have_creds = false;
         ESP_LOGW(TAG, "无可用 Wi-Fi 凭证，保持未连接（界面显示 OFFLINE）");
         return ESP_ERR_NOT_FOUND;
@@ -337,7 +388,7 @@ esp_err_t cyber_net_start(void)
     cfg.sta.pmf_cfg.capable = true;
     cfg.sta.pmf_cfg.required = false;
 
-    esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
+    const esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
     if (err != ESP_OK) return err;
 
     // SSID 可以打，密码绝对不打（仓库规范明令禁止记录 Wi-Fi 口令）。
@@ -345,9 +396,19 @@ esp_err_t cyber_net_start(void)
              (auth == CYBER_WIFI_AUTH_OPEN) ? "开放网络" : "WPA/WPA2");
     // 明文口令清零：它已经进了驱动配置结构，这里没有必要继续留在栈上。
     memset(&creds, 0, sizeof(creds));
+    return ESP_OK;
+}
 
-    err = esp_wifi_start();
+esp_err_t cyber_net_start(void)
+{
+    if (!s_net.inited) return ESP_ERR_INVALID_STATE;
+    if (s_net.started) return ESP_ERR_INVALID_STATE;
+
+    const esp_err_t err = apply_sta_config();
     if (err != ESP_OK) return err;
+
+    const esp_err_t start_err = esp_wifi_start();
+    if (start_err != ESP_OK) return start_err;
 
     s_net.started = true;
     s_net.attempts = 0;
@@ -396,6 +457,7 @@ void cyber_net_get_status(cyber_net_status_t *out)
     out->have_creds = s_net.have_creds;
     out->last_reason = s_net.last_reason;
     out->attempts = s_net.attempts;
+    memcpy(out->ip, s_net.ip, sizeof(out->ip));
 }
 
 esp_err_t cyber_net_kick(void)
@@ -441,4 +503,146 @@ esp_err_t cyber_net_clear_credentials(void)
 
     if (err == ESP_OK) ESP_LOGI(TAG, "已清除 NVS 中的 Wi-Fi 凭证");
     return err;
+}
+
+// ---------------------------------------------------------------------------
+// 配网
+// ---------------------------------------------------------------------------
+// 把配网收到的凭证写进 NVS（namespace "cyber"，与读取侧同一套键）。
+//
+// 为什么不写进 esp_wifi 自己的 flash 存储：本模块刻意用 WIFI_STORAGE_RAM，
+// 让"凭证的唯一事实来源"就是这里。两处各存一份必然出现"改了 A 不生效"的经典困惑。
+static esp_err_t save_creds_to_nvs(const char *ssid, const char *pass)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(CYBER_NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+
+    err = nvs_set_str(h, CYBER_NVS_KEY_SSID, ssid);
+    if (err == ESP_OK) {
+        if (pass != NULL && pass[0] != '\0') {
+            err = nvs_set_str(h, CYBER_NVS_KEY_PASS, pass);
+        } else {
+            // 开放网络：把可能存在的旧口令删掉，否则上一次的密码会被配到开放网络上，
+            // 表现为"明明是不加密的网络却连不上"。
+            const esp_err_t pass_err = nvs_erase_key(h, CYBER_NVS_KEY_PASS);
+            if (pass_err != ESP_OK && pass_err != ESP_ERR_NVS_NOT_FOUND) err = pass_err;
+        }
+    }
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+
+    // 安全：只打 SSID，绝不打口令（仓库规范明令禁止记录 Wi-Fi 口令）。
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "配网凭证已写入 NVS（SSID \"%s\"）", ssid);
+    } else {
+        ESP_LOGE(TAG, "配网凭证写入 NVS 失败: %s", esp_err_to_name(err));
+    }
+    return err;
+}
+
+esp_err_t cyber_net_prov_begin(void)
+{
+    if (!s_net.inited) return ESP_ERR_INVALID_STATE;
+
+    // 先置位再动栈：esp_wifi_start() 会同步触发 STA_START，事件回调要靠它决定不自动连。
+    s_prov_mode = true;
+    s_net.attempts = 0;
+    (void)esp_timer_stop(s_net.retry);
+
+    if (!s_net.started) {
+        // 没有凭证时也要把 Wi-Fi 起起来——扫描需要它。此时不配置 STA、不连接
+        // （s_prov_mode 已让 STA_START 不再自动连）。
+        const esp_err_t err = esp_wifi_start();
+        if (err != ESP_OK && err != ESP_ERR_WIFI_STATE) {
+            s_prov_mode = false;
+            return err;
+        }
+        s_net.started = true;
+    }
+    ESP_LOGI(TAG, "进入配网模式");
+    return ESP_OK;
+}
+
+esp_err_t cyber_net_prov_scan(cyber_net_scan_cb_t cb, void *ctx)
+{
+    if (!s_net.inited) return ESP_ERR_INVALID_STATE;
+    if (!s_prov_mode) return ESP_ERR_INVALID_STATE;
+
+    s_scan_cb = cb;
+    s_scan_ctx = ctx;
+
+    const wifi_scan_config_t cfg = { 0 };
+    // 非阻塞：结果经 WIFI_EVENT_SCAN_DONE → 回调。阻塞在这里会卡住调用方
+    // （配网的调用方是事件循环任务）。
+    const esp_err_t err = esp_wifi_scan_start(&cfg, false);
+    if (err != ESP_OK) {
+        s_scan_cb = NULL;
+        s_scan_ctx = NULL;
+        ESP_LOGW(TAG, "扫描启动失败: %s", esp_err_to_name(err));
+    }
+    return err;
+}
+
+esp_err_t cyber_net_prov_commit(const char *ssid, const char *pass)
+{
+    if (!s_net.inited) return ESP_ERR_INVALID_STATE;
+    if (ssid == NULL) return ESP_ERR_INVALID_ARG;
+
+    // 复用 cyber_net_util 的长度约束，不在这里重写一遍。
+    const size_t ssid_len = strlen(ssid);
+    const size_t pass_len = (pass != NULL) ? strlen(pass) : 0u;
+    if (!cyber_ssid_valid(ssid, ssid_len)) return ESP_ERR_INVALID_ARG;
+    if (!cyber_pass_valid(pass, pass_len)) return ESP_ERR_INVALID_ARG;
+
+    const esp_err_t save_err = save_creds_to_nvs(ssid, pass);
+    if (save_err != ESP_OK) return save_err;
+
+    // 提交即退出配网模式：随后的自动连接与退避重连必须恢复正常语义。
+    s_prov_mode = false;
+    s_scan_cb = NULL;
+    s_scan_ctx = NULL;
+
+    esp_err_t err = apply_sta_config();
+    if (err != ESP_OK) return err;
+
+    if (!s_net.started) {
+        err = esp_wifi_start();
+        if (err != ESP_OK) return err;
+        s_net.started = true;
+    } else {
+        // 配网期间 Wi-Fi 已为扫描而启动：直接发起连接。
+        err = esp_wifi_connect();
+    }
+
+    s_net.attempts = 0;
+    s_net.last_reason = 0;
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "配网完成，开始连接热点");
+    } else {
+        // 同步失败不致命：退避重连会继续尝试。
+        ESP_LOGW(TAG, "配网后立即连接失败: %s，转入退避", esp_err_to_name(err));
+        schedule_retry();
+    }
+    return err;
+}
+
+void cyber_net_prov_end(void)
+{
+    s_scan_cb = NULL;
+    s_scan_ctx = NULL;
+
+    // 有凭证说明这次配网已提交（或本来就配好了）：无需停栈，连接要靠它。
+    if (!s_net.started || s_net.have_creds) {
+        s_prov_mode = false;
+        return;
+    }
+
+    // 仍无可用凭证：把 Wi-Fi 停下来，避免配网取消后一直空转。
+    // 先保持 s_prov_mode=true 再 stop——否则 stop 触发的断开事件会顺手排一次重连。
+    (void)esp_timer_stop(s_net.retry);
+    (void)esp_wifi_stop();
+    s_net.started = false;
+    s_prov_mode = false;
+    ESP_LOGI(TAG, "退出配网模式（未提交凭证，Wi-Fi 已停止）");
 }

@@ -47,6 +47,7 @@ typedef struct {
     bool have_creds;      // 是否有可用凭证（没有时永远连不上）
     uint8_t last_reason;  // 最近一次断开/失败的 Wi-Fi reason 码；0 = 尚无原因
     uint8_t attempts;     // 连续失败次数（饱和，见 cyber_net_retry_bump）
+    char ip[16];          // 已获取的 IPv4 字符串（点分十进制）；未连接时为 ""
 } cyber_net_status_t;
 
 // 读取当前状态快照。out 必须非 NULL。
@@ -58,6 +59,36 @@ void cyber_net_get_status(cyber_net_status_t *out);
 //   这样刚写入的新凭证不必重启设备就能生效。
 // 供错误页的"长按重试"使用。
 esp_err_t cyber_net_kick(void);
+
+// ---------------------------------------------------------------------------
+// 配网（蓝牙配网）专用接口
+//
+// 为什么由 cyber_net 承担而不是让配网模块自建 Wi-Fi 栈：Wi-Fi 驱动与默认 netif
+// 在 ESP-IDF 里是【全局单例】，两个模块各 init 一次必然冲突，而"谁负责重连/谁负责
+// 扫描"会立刻变得说不清。所以配网只借用这套栈，扫描与连接仍然只有一个执行者。
+// ---------------------------------------------------------------------------
+
+// 扫描结果回调。records/count 只在回调期间有效（指向驱动内部缓冲），
+// 调用方需要留存就必须自己拷贝。回调运行在【事件循环任务】上下文，
+// 不得在其中做阻塞操作或碰 LVGL。
+typedef void (*cyber_net_scan_cb_t)(const void *records, unsigned count, void *ctx);
+
+// 进入配网模式：确保 Wi-Fi 栈已启动（STA），并【抑制】自动连接与退避重连。
+// 抑制是必需的：配网期间本来就没有可用凭证，若仍按常规路径重试，
+// 日志会被"连接失败→退避→重试"刷屏，且可能与扫描互相干扰。
+esp_err_t cyber_net_prov_begin(void);
+
+// 发起一次扫描。结果经 cb 回调；cb 为 NULL 时只扫描不回调。
+// 需先 cyber_net_prov_begin()。
+esp_err_t cyber_net_prov_scan(cyber_net_scan_cb_t cb, void *ctx);
+
+// 提交配网凭证：校验 → 写入 NVS（namespace "cyber"）→ 退出配网模式 → 立即连接。
+// 返回 ESP_ERR_INVALID_ARG 表示凭证不合法（SSID 长度/口令长度越界）。
+esp_err_t cyber_net_prov_commit(const char *ssid, const char *pass);
+
+// 退出配网模式。若尚未提交凭证（设备仍无可用凭证），把 Wi-Fi 停下来，
+// 避免配网结束后空转；已提交则不停（连接需要它）。
+void cyber_net_prov_end(void);
 
 // 清除 NVS 里的凭证。给后续"配网/换网"功能用；会同时断开当前连接。
 // 刻意显式提供：仓库的配网规范要求凭证必须有明确的清除途径。

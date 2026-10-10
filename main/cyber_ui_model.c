@@ -117,11 +117,13 @@ static void enter_screen(cyber_ui_model_t *m, cyber_screen_t s)
     m->screen_ms = 0;
 }
 
-// 语音空闲时应停在哪个"静态"屏幕。优先级：网络错误 > 未绑定 > 主界面。
-// 连不上网时先让用户解决网络，而不是把一个"连不上服务端"的激活页摆出来——
-// 后者会让人以为要配对，实际问题是根本没联上网。
+// 语音空闲时应停在哪个"静态"屏幕。优先级：配网 > 网络错误 > 未绑定 > 主界面。
+// 配网压过网络错误：用户已经在配网流程里，不能因为网络仍断着就把他踢回错误页。
+// 网络错误压过未绑定：连不上网时先让用户解决网络，而不是把一个"连不上服务端"的
+// 激活页摆出来——后者会让人以为要配对，实际问题是根本没联上网。
 static cyber_screen_t idle_screen(const cyber_ui_model_t *m)
 {
+    if (m->prov_active) return CYBER_SCREEN_PROVISION;
     if (m->net_err != CYBER_NET_ERR_NONE) return CYBER_SCREEN_NET_ERROR;
     if (cyber_pair_blocks_ui(m->pair)) return CYBER_SCREEN_ACTIVATION;
     return CYBER_SCREEN_HOME;
@@ -278,6 +280,7 @@ cyber_action_t cyber_model_tick(cyber_ui_model_t *m, uint32_t dt_ms)
     // 设备必须回到激活页等用户重输码；若只实现单向，设备会永远停在它最后
     // 知道的那个状态上，用户看到一个看起来正常、实际需要激活的画面。
     if (m->screen == CYBER_SCREEN_NET_ERROR ||
+        m->screen == CYBER_SCREEN_PROVISION ||
         m->screen == CYBER_SCREEN_ACTIVATION ||
         (m->screen == CYBER_SCREEN_HOME && m->voice == CYBER_VOICE_IDLE)) {
         const cyber_screen_t want = idle_screen(m);
@@ -413,15 +416,28 @@ static cyber_action_t activation_button(cyber_ui_model_t *m, cyber_btn_t btn,
     return CYBER_ACT_NONE;
 }
 
-// 网络错误页。长按 OK 重新发起联网（重新解析凭证 / 立刻重连）；短按不做事。
-// 这里不像激活页那样把长按让给"立即省电"：错误页会照常按空闲计时自动降亮/息屏，
-// 不需要手动关屏，而"重试"是这一屏上唯一有价值的动作。
+// 网络错误页。
+//   长按 OK：重新发起联网（重新解析凭证 / 立刻重连）；
+//   短按 OK：进入蓝牙配网——没有可用凭证时这才是用户真正需要做的事。
+// 这里不像激活页那样把长按让给"立即省电"：错误页会照常按空闲计时自动降亮/息屏。
 static cyber_action_t net_error_button(cyber_ui_model_t *m, cyber_btn_t btn,
                                        cyber_btn_ev_t ev)
 {
     (void)m;
+    if (btn != CYBER_BTN_OK) return CYBER_ACT_NONE;
+    if (ev == CYBER_BTN_EV_LONG) return CYBER_ACT_RETRY_NET;
+    if (ev == CYBER_BTN_EV_CLICK) return CYBER_ACT_PROV_START;
+    return CYBER_ACT_NONE;
+}
+
+// 蓝牙配网页。长按 OK 退出配网（拆掉 BLE 栈并把 RAM 还给系统）。
+// 短按不做事：这一屏的流程完全由手机侧驱动，设备侧再多一个短按动作只会产生歧义。
+static cyber_action_t provision_button(cyber_ui_model_t *m, cyber_btn_t btn,
+                                       cyber_btn_ev_t ev)
+{
+    (void)m;
     if (ev == CYBER_BTN_EV_LONG && btn == CYBER_BTN_OK) {
-        return CYBER_ACT_RETRY_NET;
+        return CYBER_ACT_PROV_STOP;
     }
     return CYBER_ACT_NONE;
 }
@@ -466,6 +482,8 @@ cyber_action_t cyber_model_button(cyber_ui_model_t *m, cyber_btn_t btn,
         return activation_button(m, btn, ev);
     case CYBER_SCREEN_NET_ERROR:
         return net_error_button(m, btn, ev);
+    case CYBER_SCREEN_PROVISION:
+        return provision_button(m, btn, ev);
     case CYBER_SCREEN_BOOT:
     default:
         return CYBER_ACT_NONE;   // 开机动画很短，不做可打断。
@@ -493,6 +511,19 @@ void cyber_model_set_net_err(cyber_ui_model_t *m, cyber_net_err_t err)
     if (m == NULL) return;
     // 越界一律当作"没有错误"：宁可漏报一次错误页，也不要越界去查 NET_ERR_* 文案表。
     m->net_err = (err < CYBER_NET_ERR_COUNT) ? err : CYBER_NET_ERR_NONE;
+}
+
+void cyber_model_set_prov(cyber_ui_model_t *m, bool active,
+                          const cyber_prov_status_t *st, const char *ip)
+{
+    if (m == NULL) return;
+    m->prov_active = active;
+    if (st != NULL) {
+        m->prov = *st;
+    } else {
+        memset(&m->prov, 0, sizeof(m->prov));
+    }
+    copy_text(m->prov_ip, sizeof(m->prov_ip), ip);
 }
 
 void cyber_model_set_pair(cyber_ui_model_t *m, cyber_pair_state_t state,
@@ -657,6 +688,45 @@ uint32_t cyber_net_err_color(cyber_net_err_t err)
     (void)err;
     // 统一故障红：错误页不需要按原因分色，红色本身就是"出问题了"的最强信号。
     return CYBER_RED;
+}
+
+// ---------------------------------------------------------------------------
+// 蓝牙配网页查询
+// ---------------------------------------------------------------------------
+cyber_prov_state_t cyber_model_prov_state(const cyber_ui_model_t *m)
+{
+    if (m == NULL) return CYBER_PROV_OFF;
+    return cyber_prov_display_state(&m->prov);
+}
+
+const char *cyber_model_prov_name(void)
+{
+    return CYBER_PROV_DEVICE_NAME;
+}
+
+const char *cyber_model_prov_detail(const cyber_ui_model_t *m)
+{
+    // 每个阶段的说明文案。用 cyber_font_cjk 渲染，所用汉字都在字库覆盖的基本汉字区
+    // （0x4E00-0x9FFF）。改文案时必须重新核对字形覆盖。
+    static const char *const DETAIL[CYBER_PROV_COUNT] = {
+        "",                      // OFF：配网页根本不显示
+        "正在启动...",            // STARTING
+        "手机打开配网小程序",     // ADVERTISING
+        "请在手机上输入热点",     // BLE_CONNECTED
+        "正在连接热点...",        // WIFI_CONNECTING
+        "",                      // WIFI_CONNECTED：改显示 IP（见下）
+        "配网失败，请重试",       // FAILED
+    };
+    _Static_assert(sizeof(DETAIL) / sizeof(DETAIL[0]) == CYBER_PROV_COUNT,
+                   "DETAIL 与 cyber_prov_state_t 不同步");
+    if (m == NULL) return "";
+
+    const cyber_prov_state_t s = cyber_model_prov_state(m);
+    if (s == CYBER_PROV_WIFI_CONNECTED) {
+        // 连上了就把 IP 摆出来——这是"确实配成功了"最有力的证据。
+        return (m->prov_ip[0] != '\0') ? m->prov_ip : "已连接";
+    }
+    return DETAIL[s];
 }
 
 const char *cyber_voice_label(cyber_voice_state_t s)

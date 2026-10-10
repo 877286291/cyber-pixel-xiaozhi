@@ -1078,9 +1078,9 @@ static void test_net_error_page(void)
         assert(cyber_net_err_suggestion((cyber_net_err_t)i)[0] != '\0');
     }
 
-    // 错误页上：长按 OK = 重发联网；短按无效（不会误触发别的动作）。
+    // 错误页上：长按 OK = 重发联网；短按 OK = 进入蓝牙配网（没凭证时这才是该做的事）。
     assert(cyber_model_button(&m, CYBER_BTN_OK, CYBER_BTN_EV_LONG) == CYBER_ACT_RETRY_NET);
-    assert(cyber_model_button(&m, CYBER_BTN_OK, CYBER_BTN_EV_CLICK) == CYBER_ACT_NONE);
+    assert(cyber_model_button(&m, CYBER_BTN_OK, CYBER_BTN_EV_CLICK) == CYBER_ACT_PROV_START);
     assert(m.screen == CYBER_SCREEN_NET_ERROR);
 
     // 网络恢复、但仍需配对 → 回到激活页。
@@ -1111,6 +1111,92 @@ static void test_net_error_page(void)
     cyber_model_set_net_err(&m, CYBER_NET_ERR_NO_CREDS);
     cyber_model_tick(&m, 40);
     assert(m.screen == CYBER_SCREEN_NET_ERROR);
+    advance(&m, CYBER_IDLE_DIM_MS, 40);
+    assert(m.idle == CYBER_IDLE_DIM);
+}
+
+
+// 蓝牙配网页：入口/出口、阶段推导、文案、以及"不豁免省电"。
+static void test_provision_screen(void)
+{
+    cyber_ui_model_t m;
+
+    // 无凭证 → 错误页 → 短按 OK 请求进入配网。
+    cyber_model_init(&m);
+    cyber_model_set_pair(&m, CYBER_PAIR_OFFLINE, NULL);
+    cyber_model_set_net_err(&m, CYBER_NET_ERR_NO_CREDS);
+    advance(&m, CYBER_BOOT_MS, 40);
+    assert(m.screen == CYBER_SCREEN_NET_ERROR);
+    assert(cyber_model_button(&m, CYBER_BTN_OK, CYBER_BTN_EV_CLICK) == CYBER_ACT_PROV_START);
+    // 长按仍是"重试联网"，不能被配网入口抢走。
+    assert(cyber_model_button(&m, CYBER_BTN_OK, CYBER_BTN_EV_LONG) == CYBER_ACT_RETRY_NET);
+
+    // main.c 收到 PROV_START 后置位；模型据此切到配网页（配网压过网络错误）。
+    cyber_prov_status_t st = { .started = true };
+    cyber_model_set_prov(&m, true, &st, NULL);
+    cyber_model_tick(&m, 40);
+    assert(m.screen == CYBER_SCREEN_PROVISION);
+    assert(cyber_model_prov_state(&m) == CYBER_PROV_ADVERTISING);
+
+    // 阶段推导跟随快照：手机连上 → 等下发凭证。
+    st.ble_connected = true;
+    cyber_model_set_prov(&m, true, &st, NULL);
+    assert(cyber_model_prov_state(&m) == CYBER_PROV_BLE_CONNECTED);
+
+    // 连上热点：显示 IP（这是"确实配成功了"的证据）。
+    st.ble_connected = false;
+    st.wifi_connected = true;
+    cyber_model_set_prov(&m, true, &st, "192.168.1.23");
+    assert(cyber_model_prov_state(&m) == CYBER_PROV_WIFI_CONNECTED);
+    assert(strcmp(cyber_model_prov_detail(&m), "192.168.1.23") == 0);
+    // 没有 IP 字符串时也要有可读文案，不能是空串。
+    cyber_model_set_prov(&m, true, &st, NULL);
+    assert(cyber_model_prov_detail(&m)[0] != '\0');
+
+    // 失败态优先显示失败，且文案非空。
+    st.failed = true;
+    cyber_model_set_prov(&m, true, &st, NULL);
+    assert(cyber_model_prov_state(&m) == CYBER_PROV_FAILED);
+    assert(cyber_model_prov_detail(&m)[0] != '\0');
+
+    // 每个阶段的说明文案都不能为空（OFF 除外，它根本不显示配网页）。
+    for (int i = CYBER_PROV_STARTING; i < CYBER_PROV_COUNT; i++) {
+        cyber_prov_status_t s = { .started = true };
+        switch ((cyber_prov_state_t)i) {
+        case CYBER_PROV_WIFI_CONNECTED: s.wifi_connected = true; break;
+        case CYBER_PROV_WIFI_CONNECTING: s.wifi_connecting = true; break;
+        case CYBER_PROV_BLE_CONNECTED: s.ble_connected = true; break;
+        case CYBER_PROV_FAILED: s.failed = true; break;
+        default: break;
+        }
+        cyber_model_set_prov(&m, true, &s, "10.0.0.2");
+        assert(cyber_model_prov_detail(&m)[0] != '\0');
+    }
+
+    // 广播名必须非空且以 BLUFI 开头：小程序只列出该前缀的设备，改了名字就扫不到。
+    assert(strncmp(cyber_model_prov_name(), "BLUFI", 5) == 0);
+
+    // 长按 OK 退出配网。
+    assert(cyber_model_button(&m, CYBER_BTN_OK, CYBER_BTN_EV_LONG) == CYBER_ACT_PROV_STOP);
+    // 退出后回到错误页（网络仍断着）。
+    cyber_model_set_prov(&m, false, NULL, NULL);
+    cyber_model_tick(&m, 40);
+    assert(m.screen == CYBER_SCREEN_NET_ERROR);
+
+    // 边界：空指针与空快照都不得崩。
+    cyber_model_set_prov(NULL, true, &st, NULL);
+    cyber_model_set_prov(&m, true, NULL, NULL);
+    assert(cyber_model_prov_state(NULL) == CYBER_PROV_OFF);
+    assert(cyber_model_prov_detail(NULL)[0] == '\0');
+    assert(cyber_model_prov_state(&m) == CYBER_PROV_OFF);
+
+    // 配网页不豁免省电：与激活页不同，它会照常按空闲计时降亮/息屏。
+    // （激活页豁免是因为用户要盯着 6 位码；配网时用户在看手机，不需要屏幕常亮。）
+    cyber_model_init(&m);
+    cyber_prov_status_t adv = { .started = true };
+    cyber_model_set_prov(&m, true, &adv, NULL);
+    advance(&m, CYBER_BOOT_MS, 40);
+    assert(m.screen == CYBER_SCREEN_PROVISION);
     advance(&m, CYBER_IDLE_DIM_MS, 40);
     assert(m.idle == CYBER_IDLE_DIM);
 }
@@ -1159,6 +1245,7 @@ int main(void)
     test_test_only_reaches_home();
     test_home_returns_to_activation_after_unbind();
     test_net_error_page();
+    test_provision_screen();
 
     printf("test_cyber_ui_model: PASS\n");
     return 0;

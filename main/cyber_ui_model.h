@@ -17,6 +17,8 @@
 // cyber_net_err_t：网络错误分类。两个头文件都是纯逻辑、无 ESP-IDF 依赖，
 // 让模型直接持有错误类型，避免在接线层再复制一份枚举（会漂移）。
 #include "cyber_net_util.h"
+// cyber_prov_status_t / cyber_prov_state_t：蓝牙配网的状态与阶段（同属纯逻辑层）。
+#include "cyber_prov_util.h"
 
 // ---------------------------------------------------------------------------
 // 屏幕
@@ -27,6 +29,7 @@ typedef enum {
     CYBER_SCREEN_VOICE,      // 语音反馈：聆听/思考/说话/出错
     CYBER_SCREEN_ACTIVATION, // 未绑定：显示配对码等用户在控制台绑定
     CYBER_SCREEN_NET_ERROR,  // 联网失败：全屏给出原因与排查建议（替代旧的静默 OFFLINE）
+    CYBER_SCREEN_PROVISION,  // 蓝牙配网：等手机连接并下发 Wi-Fi 凭证
 } cyber_screen_t;
 
 // ---------------------------------------------------------------------------
@@ -103,6 +106,8 @@ typedef enum {
     CYBER_ACT_BACKLIGHT,      // 按 model->backlight_percent 设背光
     CYBER_ACT_VOLUME,         // 按 model->volume_user 设播放音量
     CYBER_ACT_RETRY_NET,      // 错误页长按 OK：重新发起联网
+    CYBER_ACT_PROV_START,     // 错误页短按 OK：进入蓝牙配网
+    CYBER_ACT_PROV_STOP,      // 配网页长按 OK：退出蓝牙配网
 } cyber_action_t;
 
 // 空闲档位：可穿戴设备靠降背光省电，渲染不停，按键立即恢复。
@@ -168,6 +173,12 @@ typedef struct {
     // 由 main.c 每个 tick 从 cyber_net 状态快照 + OTA 快照换算后写入。
     cyber_net_err_t net_err;
 
+    // 蓝牙配网。prov_active 为真时界面停在配网页；prov 是 BLE/Wi-Fi 两侧的事实快照，
+    // 由 main.c 每拍从 cyber_prov_get_status() 拷入（界面只读消费）。
+    bool prov_active;
+    cyber_prov_status_t prov;
+    char prov_ip[16];   // 配网连上热点后的 IPv4 字符串（未连接时为空串）
+
     cyber_pair_state_t pair;     // 配对流程状态（CYBER_PAIR_OFF = 未启用）
     char pair_code[CYBER_PAIR_CODE_LEN + 1];  // 仅 WAITING 时有 6 位数字；否则为 ""
 
@@ -202,6 +213,11 @@ void cyber_model_set_net(cyber_ui_model_t *m, bool connected);
 // 外部状态注入（网络错误）。NONE 表示恢复正常；非 NONE 时界面切到错误页。
 // 由 main.c 每拍从 cyber_net 状态快照 + OTA 快照换算。幂等。
 void cyber_model_set_net_err(cyber_ui_model_t *m, cyber_net_err_t err);
+
+// 外部状态注入（蓝牙配网）。active 为真时界面停在配网页；st 为 BLE/Wi-Fi 事实快照。
+// ip 可为 NULL（未连接）。由 main.c 每拍从 cyber_prov 读取后写入。幂等。
+void cyber_model_set_prov(cyber_ui_model_t *m, bool active,
+                          const cyber_prov_status_t *st, const char *ip);
 
 // 外部状态注入（配对流程）。code 可为 NULL；只有 WAITING 时它才非空。
 // "是否为合法 6 位数字"的校验发生在 cyber_ota 这一侧的边界上（cyber_ota_code_valid），
@@ -259,6 +275,15 @@ const char *cyber_net_err_reason(cyber_net_err_t err);
 const char *cyber_net_err_suggestion(cyber_net_err_t err);
 // 错误页强调色：统一用故障红，让"出问题了"一眼可辨。
 uint32_t cyber_net_err_color(cyber_net_err_t err);
+
+// --- 蓝牙配网页（仅当 screen == CYBER_SCREEN_PROVISION 时有意义）---
+// 当前配网阶段（由 prov 快照推导，见 cyber_prov_display_state）。
+cyber_prov_state_t cyber_model_prov_state(const cyber_ui_model_t *m);
+// 配网页要显示的蓝牙广播名（用户手机里要选的那个设备）。
+const char *cyber_model_prov_name(void);
+// 配网页的中文说明行：随阶段变化；已连上热点时返回其 IPv4 字符串。
+// 返回值指向模型内部字段或静态串，生命周期见各自来源。
+const char *cyber_model_prov_detail(const cyber_ui_model_t *m);
 // 语音状态标签与强调色。
 const char *cyber_voice_label(cyber_voice_state_t s);
 uint32_t cyber_voice_color(cyber_voice_state_t s);

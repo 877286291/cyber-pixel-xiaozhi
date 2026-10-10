@@ -45,14 +45,89 @@ CONFIG_LV_MEM_SIZE_KILOBYTES=24
 # --- 系统 ---
 CONFIG_FREERTOS_HZ=1000
 
-# --- Bluetooth LE ---
-# 关掉:本应用没有任何 BLE 消费方。上游模板启用 BLE 是为了它的 demo 菜单,
-# 而本应用已用自建界面取代那个菜单(见 main/CMakeLists.txt 的说明)。
-# 关掉的价值:BLE 与 Wi-Fi 同时启用会拉起软件共存(CONFIG_ESP_COEX_SW_COEXIST_ENABLE),
-# 在无 PSRAM 的 C3 上这是要从本就紧张的内部内存里再切一块。后续做 Opus 时需要把
-# 每一 KB 都留给音频缓冲,所以不用就先关。
-# ★ 若将来采用 BLE/BLUFI 蓝牙配网,必须把这一段整体恢复(见
-#   docs/development/engineering/wifi-provisioning.md),并重新核算内存预算。
+# --- Bluetooth LE（蓝牙配网）---
+# 本应用只在【配网期间】启用 BLE：cyber_prov 起 NimBLE + BLUFI 广播，收到 Wi-Fi
+# 凭证并存进 NVS 后，cyber_prov_stop() 会把整栈拆掉、把 RAM 还给系统。
+# 因此下面的 BLE 内存开销是"配网时的临时开销"，不是常驻开销——这是无 PSRAM 的 C3
+# 上必须的取舍：常驻 BLE 会与 Wi-Fi 软件共存抢内部内存，而本应用同时还要跑
+# Opus 编解码与 LVGL（见 cyber_audio.c 的内存账）。
+#
+# ★ 恢复本段时已同步更新 docs/development/engineering/wifi-provisioning.md 的内存说明。
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+# BLUFI：手机侧"蓝牙配网-FoloToy AI PASSPORT"小程序使用的协议。
+CONFIG_BT_NIMBLE_BLUFI_ENABLE=y
+# 只做单连接 peripheral（广播 + 被连接），不需要 central/observer，
+# 关掉它们能省下对应的 host 缓冲。
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_HOST_BASED_PRIVACY=n
+# 不把 BLE 绑定信息落盘：本设备每次配网都是全新会话，持久化只会占 NVS。
+CONFIG_BT_NIMBLE_NVS_PERSIST=n
+
+# C3 有硬件 MPI 加速。不加这一项，3072 位 DH 会退化成软件实现（官方注释实测约 12 秒），
+# 配网协商会长到像卡死。
+# 注：这里刻意【不】开 CONFIG_MBEDTLS_DHM_C——本实现走 PSA 的 FFDH（见
+# cyber_prov_security.c），不需要旧版 mbedtls DHM，开了只会白白带上 DHE 的 TLS 密码套件。
+CONFIG_MBEDTLS_HARDWARE_MPI=y
+
+# --- 密码学：为蓝牙配网改用软件 AES ---
+# 实测问题：配网时 BLUFI 加密失败，报 "esp-aes: Failed to allocate memory"。
+# 根因是硬件 AES 的 DMA 路径（components/mbedtls/port/aes/dma/esp_aes_dma_core.c）
+# 要用 heap_caps_aligned_alloc 申请【16 字节对齐】的进出缓冲；而配网时（BLE + WiFi
+# 扫描同时占用）堆只剩几百字节且高度碎片化，对齐分配直接失败。
+# 软件 AES 不申请任何 DMA 缓冲，171 字节的单包加密约 0.1ms，配网与语音场景完全够用；
+# 官方 Kconfig 亦注明 240MHz 下硬件 AES 相对软件并无速度优势。
+# 代价：TLS 吞吐下降（对本语音助手不构成瓶颈）。这是"无 PSRAM 的 C3 上让配网可用"
+# 换来的取舍，若要改回硬件 AES，必须同时解决配网时刻的连续内存问题。
+CONFIG_MBEDTLS_HARDWARE_AES=n
+
+# --- 为蓝牙配网腾出连续内存 ---
+# 实测问题：配网启动时 BLE 报 "hci inits failed" / btc_init 断言失败。逐步打印堆后
+# 定位到：BLE 协议栈初始化需要约 45KB，而进入配网时只剩约 50KB，btc_init 的
+# 4KB 任务栈 + 结构体放不下（实测 nimble_port_init 后 free 仅 5588 / largest 5120）。
+# 以下三项都是从"减少常驻缓冲"入手挤出空间，不改功能行为。
+#
+# WiFi 动态缓冲上限。它们是按需分配、用完即还，但上限决定了极端情况下能占多少，
+# 也影响堆的碎片形态。本应用是语音助手（24 kbps Opus + 小 JSON），16 足够；
+# 注意动态 RX 不得小于静态 RX（见 STATIC_RX_BUFFER_NUM）。
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=16
+# WiFi 静态 RX 缓冲。这些是【init 时一次性常驻】的（每个约 1.6KB），
+# 10 个就是约 16KB —— 这是我们能收回的最大一块常驻内存。4 个对语音助手足够。
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4
+# LWIP TCP 收发缓冲。默认各 5760B，是按"高吞吐"给的；本应用上下行都只有
+# 24 kbps 的 Opus 与小 JSON，2880B 仍有充足余量（TLS 记录会被分片）。
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=2880
+CONFIG_LWIP_TCP_WND_DEFAULT=2880
+# BT 控制器的并发活动数。默认 6 是按"多连接/多广播"预留的，而本应用只做
+# 单连接的 BLE peripheral（配网），2 已够用；控制器 RAM 直接随它增长。
+CONFIG_BT_CTRL_BLE_MAX_ACT=2
+# NimBLE host 的内存池。默认值是按"多连接 + 高吞吐"给的，单连接配网用不上，
+# 而这些池是【整块 calloc】——池越大，越可能因堆已碎片化而分配失败。
+#   ACL：默认 24 × ~264B ≈ 6.3KB  →  8 × ~264B ≈ 2.1KB
+#   EVT：默认 30 × 70B ≈ 2.1KB     →  12 × 70B ≈ 0.8KB
+#   MSYS_1：默认 12 × 256B ≈ 3KB    →  8 × 256B ≈ 2KB
+#   MSYS_2：默认 24 × 320B ≈ 7.7KB →  6 × 320B ≈ 1.9KB
+CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT=8
+CONFIG_BT_NIMBLE_TRANSPORT_EVT_COUNT=12
+CONFIG_BT_NIMBLE_TRANSPORT_EVT_DISCARD_COUNT=4
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=8
+CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=6
+
+# 【实测踩过的坑，勿删】NimBLE 的 host 任务由 esp_nimble_enable() 创建，
+# 而那个函数【无条件返回 ESP_OK】——即使 xTaskCreatePinnedToCore 失败被静默吞掉：
+#     xTaskCreatePinnedToCore(host_task, "nimble_host", NIMBLE_HS_STACK_SIZE, ...);
+#     return ESP_OK;      // 不看返回值
+# 后果极其隐蔽：日志照常打印"配网已启动"，但 NimBLE 主机从未运行、从不广播，
+# 手机端表现为"搜不到设备"。实测正是如此——当时 largest=3072 而
+# BT_NIMBLE_HOST_TASK_STACK_SIZE=4096，只差 1KB。
+# 因此：BT_NIMBLE_HOST_TASK_STACK_SIZE 所需的 4KB【连续】内存必须在起 BLE 前留够，
+# 下面的收窄就是为了腾出这段连续块，不要为了"省内存"再把它们调回默认值。
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=4096
 
 # --- TLS / HTTPS(小智激活 + 对话)---
 # 激活要向 https://api.tenclass.net 发请求,必须开证书校验。
