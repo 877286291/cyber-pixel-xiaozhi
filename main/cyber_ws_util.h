@@ -35,6 +35,13 @@
 // 单帧 PCM 的字节数（16 bit 单声道）。
 #define CYBER_WS_FRAME_PCM_BYTES    (CYBER_WS_FRAME_SAMPLES * 2u * CYBER_WS_CHANNELS)
 
+// 单帧 Opus 的上限。24 kbps / 60 ms 约 180 字节；这里留出两倍以上余量，应付
+// 服务端调高码率或上行码率提高。它是【两个方向共用的一道红线】：
+//   - 上行：编码器产出的帧超过它就会被传输层拒收；
+//   - 下行：服务端下发的帧超过它会被抖动缓冲拒收并计数。
+// 超过上限的帧必须整帧丢弃，不能截断——截断的 Opus 解出来是杂音，比丢掉更难查。
+#define CYBER_WS_MAX_OPUS_FRAME    512u
+
 // 控制消息 JSON 缓冲上限。hello 约 230 字节；留足余量，且刻意给小——
 // 这些缓冲会随会话常驻，没有理由按"可能很长"来分配。
 #define CYBER_WS_JSON_CAP           320

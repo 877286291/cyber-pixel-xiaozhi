@@ -4,14 +4,22 @@
 ##   - bsp 是硬件复用层，Opus 与 WebSocket 是应用级协议栈，不属于板级逻辑；
 ##   - 依赖由真正引用它们的代码所在组件声明，换应用时可以连同 main 一起替换。
 ##
-## 版本全部精确钉住（与 bsp/idf_component.yml 同一要求）：这些库的 API 与内存行为
-## 会随版本变化，而本板没有 PSRAM、堆预算很紧，升级必须是主动决定而不是被动漂移。
+## 版本钉住（与 bsp/idf_component.yml 同一要求）：这些库的 API 与内存行为会随版本
+## 变化，而本板没有 PSRAM、堆预算很紧，升级必须是主动决定而不是被动漂移。
 dependencies:
   idf:
-    version: ">=5.5.3,<5.6.0"
+    version: ">=6.0.1,<7.0.0"
+  # cJSON：ESP-IDF 6.x 移除了内置的 `json` 组件，改用独立的 espressif/cjson。
+  # 在 IDF5 上它由 IDF 内置提供；到了 6.x，main 若仍 REQUIRES json 会报
+  # "component 'json' could not be found"。esp_websocket_client 在 IDF6 下
+  # 会传递依赖到 espressif/cjson，这里显式声明，cJSON 版本由 dependencies.lock 钉住。
+  espressif/cjson: "*"
   # WebSocket 传输。小智对话通道走 wss，用它承载控制消息与 Opus 二进制帧。
   espressif/esp_websocket_client: "^1.8.0"
-  # Opus 编解码。选 78/esp-opus 是因为它就是小智参考实现的同一份移植，
-  # 服务端下发的音频即 Opus 帧，用同源实现能少一层兼容风险。
-  # 代价：约 60-80 KB flash 加数十 KB RAM（见 docs/reference 的音频压缩实测记录）。
-  78/esp-opus: "^1.0.5"
+  # Opus 编解码。用 espressif/esp_audio_codec（esp_opus_* API）对齐 xiaozhi-esp32
+  # 官方实现。Opus/SILK 的 scratch 工作区在 open() 时从堆分配、close() 时释放，
+  # 半双工切换（采集开编码器、播放开解码器）能把这块 RAM 还给堆。
+  # 替代之前的 78/esp-opus：那个移植用 -DUSE_ALLOCA 让 scratch 走栈，
+  # 在 silk_find_pitch_lags_FIX 里栈溢出 → Stack protection fault 崩溃
+  # （详见 cyber_audio.c 顶部说明）。
+  espressif/esp_audio_codec: "^2.5.0"

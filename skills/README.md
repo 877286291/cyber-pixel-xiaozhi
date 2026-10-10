@@ -16,7 +16,7 @@ Each skill must contain at least `SKILL.md` with YAML frontmatter defining `name
 | Skill | What it does |
 | --- | --- |
 | [passport-develop](passport-develop/SKILL.md) | Turn a feature request into an application, tests, and a verified delivery; coordinate the other core skills when needed. |
-| [passport-setup](passport-setup/SKILL.md) | Inspect and prepare the ESP-IDF 5.5.3 environment without replacing other installations or assuming USB access. |
+| [passport-setup](passport-setup/SKILL.md) | Inspect and prepare the ESP-IDF 6.1 environment without replacing other installations or assuming USB access. |
 | [passport-build](passport-build/SKILL.md) | Run the shared gate and retain a verified merged image with matching ELF/MAP artifacts. |
 | [passport-device-test](passport-device-test/SKILL.md) | After authorization, identify the target, flash the chosen firmware, and distinguish logs from physical acceptance. |
 | [passport-debug](passport-debug/SKILL.md) | Diagnose crashes, memory problems, blank Chinese text, and peripheral failures using evidence and matching symbols. |

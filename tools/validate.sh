@@ -48,6 +48,10 @@ run_static_checks() {
         tests/test_cyber_ws_util.c main/cyber_ws_util.c \
         -o "${test_dir}/test_cyber_ws_util"
     "${test_dir}/test_cyber_ws_util"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_cyber_audio_util.c main/cyber_audio_util.c \
+        -o "${test_dir}/test_cyber_audio_util"
+    "${test_dir}/test_cyber_audio_util"
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain -Icomponents/bsp/src \
         tests/test_cyber_ui_layout.c components/bsp/src/bsp_display_rounding.c \
         -o "${test_dir}/test_cyber_ui_layout"
@@ -94,7 +98,7 @@ run_firmware_checks() (
     local validation_build_dir
 
     if ! command -v idf.py >/dev/null 2>&1; then
-        echo "ERROR: idf.py is not available; activate ESP-IDF 5.5.3 first." >&2
+        echo "ERROR: idf.py is not available; activate ESP-IDF 6.1 first." >&2
         return 1
     fi
 

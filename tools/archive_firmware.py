@@ -45,11 +45,12 @@ SYSTEM_DIRECTORY_ALIASES = (
     if sys.platform == "darwin" else {}
 )
 
-# ESP-IDF v5.5.3: components/bootloader_support/include/esp_app_format.h
-# (24-byte esp_image_header_t, 8-byte esp_image_segment_header_t), and
-# components/esp_app_format/include/esp_app_desc.h (256-byte esp_app_desc_t).
-# esptool's cmds._parse_app_info uses the same descriptor structure. elf2image
-# inserts SHA256 of the entire input ELF at image offset 0xB0 (32 + 144).
+# 镜像布局常量（ESP32-C3）。app 描述符 esp_app_desc_t（256 字节，magic
+# 0xABCD5432）在段 0 数据区，起始于 IMAGE_HEADER_SIZE + 段头大小 = 24 + 8 = 32。
+# 这组常量源自 ESP-IDF v5.5.3 的 esp_app_format.h / esp_app_desc.h；6.x 起
+# esp_image_header_t 增加了 min_chip_rev_full / max_chip_rev_full 等字段，但其
+# 对 app 描述符的相对偏移不变（已用 v6.1 实构建镜像核对：描述符 magic 仍落在
+# 0x20，解析通过）。若将来偏移变化，需同步更新这两个常量。
 IMAGE_HEADER_SIZE = 24
 SEGMENT_HEADER = struct.Struct("<II")
 APP_DESCRIPTOR = struct.Struct("<II8s32s32s16s16s32s32sHHB3s72s")
@@ -110,11 +111,15 @@ def parse_flash_args(raw: bytes) -> dict[str, int]:
             if len(fields) % 2:
                 raise ValueError("invalid flash_args options")
             for key, value in zip(fields[::2], fields[1::2]):
-                if key not in ("--flash_mode", "--flash_freq", "--flash_size") or key in options:
+                # ESP-IDF 5.x 用下划线（--flash_size），6.x 起改用连字符
+                # （--flash-size）。把选项名里除前导 -- 之外的连字符归一化为下划线，
+                # 两种格式都能解析。
+                canon = "--" + key[2:].replace("-", "_") if key.startswith("--") else key
+                if canon not in ("--flash_mode", "--flash_freq", "--flash_size") or canon in options:
                     raise ValueError(f"unsupported or duplicate flash_args option: {key}")
                 if not re.fullmatch(r"[A-Za-z0-9]+", value):
                     raise ValueError("unsafe flash_args option value")
-                options[key] = value
+                options[canon] = value
             continue
         if len(fields) != 2:
             raise ValueError("invalid image entry in flash_args")

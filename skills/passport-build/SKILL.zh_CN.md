@@ -14,7 +14,7 @@ description: 验证并打包 FoloToy AI Passport 固件，交付已校验的合�
 
 ## 构建用户要求的配置
 
-1. 确认已激活 ESP-IDF 5.5.3。缺失时使用可用的 `passport-setup`，或其对应
+1. 确认已激活 ESP-IDF 6.1。缺失时使用可用的 `passport-setup`，或其对应
    环境指南。取得必要的联网／系统权限，不绕过审批。
 2. 核对已跟踪 defaults、依赖与分区是否对应用户的应用。门禁从
    `sdkconfig.defaults` 生成隔离配置，不使用被忽略的根目录 `sdkconfig`。

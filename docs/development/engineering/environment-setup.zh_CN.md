@@ -4,7 +4,7 @@
 
 # AI Agent 环境引导
 
-本文用于让 AI agent 在全新 checkout 中完成环境搭建，不依赖特定开发者的 shell 函数、绝对路径、IDE 或预装 ESP-IDF。项目要求 ESP32-C3 对应的 ESP-IDF 5.5.3。
+本文用于让 AI agent 在全新 checkout 中完成环境搭建，不依赖特定开发者的 shell 函数、绝对路径、IDE 或预装 ESP-IDF。项目要求 ESP32-C3 对应的 ESP-IDF 6.1。
 
 ## Agent 执行约束
 
@@ -12,7 +12,7 @@
 
 1. 已有 checkout 中先运行 `git status --short --branch`，保留全部用户修改。
 2. 检测操作系统和架构；下载新环境前先检查是否已有激活的 ESP-IDF。
-3. 仅当 `idf.py --version` 输出 `ESP-IDF v5.5.3` 时复用已有安装。其他版本应并行安装，不得覆盖。
+3. 仅当 `idf.py --version` 输出 `ESP-IDF v6.1` 时复用已有安装。其他版本应并行安装，不得覆盖。
 4. 使用 `sudo`、安装系统包、写仓库外目录、修改用户组或通过受限网络下载前，先请求用户授权。
 5. 未经用户明确授权，不得修改 shell 启动文件、全局 Git 配置、代理、证书校验或包管理器配置。
 6. 不得把机器专用的 shell alias 当作必要命令。
@@ -44,12 +44,12 @@ git status --short --branch
 
 不得为当前项目编造镜像地址。用户提供的仓库 URL 不可访问时，应询问已授权的镜像或归档地址。
 
-乐鑫 Git 服务镜像收录了完整 `esp-idf` 历史以及 v5.5.3 的全部子模块仓库
+乐鑫 Git 服务镜像收录了完整 `esp-idf` 历史以及 v6.1 的全部子模块仓库
 （`espressif/esp32-wifi-lib`、`espressif/esp-lwip`、`ThrowTheSwitch/CMock` 等）。
-由于 v5.5.3 的 `.gitmodules` 条目全部是相对 URL，从该镜像克隆父仓库后，每个
+由于 v6.1 的 `.gitmodules` 条目全部是相对 URL，从该镜像克隆父仓库后，每个
 子模块会自动解析到同一镜像，无需单独的镜像改写步骤。从镜像克隆得到的
 checkout 与 GitHub 克隆完全一致：请核对 tag commit 与
-`https://github.com/espressif/esp-idf/releases/tag/v5.5.3` 相同（当前为
+`https://github.com/espressif/esp-idf/releases/tag/v6.1` 相同（当前为
 `b31fcc7a314a44ad992b58f589f7d1d8a4fadff6`）。
 
 旧版镜像安装脚本有时会在全局 Git 配置中写入按仓库的 `insteadOf` 重定向
@@ -104,23 +104,23 @@ brew install cmake ninja ccache dfu-util libusb python
 
 ### Windows 与 WSL2
 
-原生 Windows 使用乐鑫官方 ESP-IDF Tools Installer，并选择 ESP-IDF v5.5.3。后续命令应在安装器生成的 ESP-IDF PowerShell 或 Command Prompt 中执行，不得把 POSIX 激活命令机械翻译为 PowerShell。
+原生 Windows 使用乐鑫官方 ESP-IDF Tools Installer，并选择 ESP-IDF v6.1。后续命令应在安装器生成的 ESP-IDF PowerShell 或 Command Prompt 中执行，不得把 POSIX 激活命令机械翻译为 PowerShell。
 
 WSL2 可以执行 Linux 编译流程。烧录和监视需要把 USB 设备转发进 WSL；否则在 WSL 编译，在已激活 ESP-IDF 的原生 Windows 终端烧录。
 
-## 安装 ESP-IDF 5.5.3
+## 安装 ESP-IDF 6.1
 
 安装位置应位于当前仓库之外，路径不得包含空格。以下变量只服务本任务，并允许用户覆盖：
 
 ```bash
-export AI_PASSPORT_IDF_ROOT="${AI_PASSPORT_IDF_ROOT:-${HOME}/esp/esp-idf-v5.5.3}"
+export AI_PASSPORT_IDF_ROOT="${AI_PASSPORT_IDF_ROOT:-${HOME}/esp/esp-idf-v6.1}"
 ```
 
 ### 国际线路
 
 ```bash
 mkdir -p "$(dirname "${AI_PASSPORT_IDF_ROOT}")"
-git clone --branch v5.5.3 --recursive \
+git clone --branch v6.1 --recursive \
     https://github.com/espressif/esp-idf.git \
     "${AI_PASSPORT_IDF_ROOT}"
 "${AI_PASSPORT_IDF_ROOT}/install.sh" esp32c3
@@ -143,14 +143,14 @@ git -C "${AI_PASSPORT_IDF_ROOT}" submodule update --init --recursive
 
 ```bash
 mkdir -p "$(dirname "${AI_PASSPORT_IDF_ROOT}")"
-git clone --branch v5.5.3 --recursive \
+git clone --branch v6.1 --recursive \
     https://git.espressif.com.cn/espressif/esp-idf.git \
     "${AI_PASSPORT_IDF_ROOT}"
 IDF_GITHUB_ASSETS=dl.espressif.cn/github_assets \
     "${AI_PASSPORT_IDF_ROOT}/install.sh" esp32c3
 ```
 
-镜像发布了与 GitHub 相同的 v5.5.3 tag commit
+镜像发布了与 GitHub 相同的 v6.1 tag commit
 （`b31fcc7a314a44ad992b58f589f7d1d8a4fadff6`），并且托管了各子模块仓库本身，
 因此得到的 checkout 与 GitHub 克隆完全一致。
 
@@ -159,7 +159,7 @@ IDF_GITHUB_ASSETS=dl.espressif.cn/github_assets \
 ```bash
 export AI_PASSPORT_GITEE_TOOLS_ROOT="${AI_PASSPORT_GITEE_TOOLS_ROOT:-${HOME}/esp/esp-gitee-tools}"
 mkdir -p "$(dirname "${AI_PASSPORT_IDF_ROOT}")"
-git clone --branch v5.5.3 \
+git clone --branch v6.1 \
     https://gitee.com/EspressifSystems/esp-idf.git \
     "${AI_PASSPORT_IDF_ROOT}"
 git clone https://gitee.com/EspressifSystems/esp-gitee-tools.git \
@@ -174,7 +174,7 @@ Gitee 辅助工具报告下载中断时，对同一个 checkout 重新执行子�
 
 ### 子模块拉取与长等待
 
-`esp-idf` v5.5.3 内含 20 余个子模块，其中
+`esp-idf` v6.1 内含 20 余个子模块，其中
 （`components/esp_wifi/lib`、`components/esp_phy/lib`、
 `components/bt/controller/lib_esp32c3_family`）是大体积预编译库。
 `git submodule update --init --recursive` 可能长时间没有输出，agent 的 shell
@@ -239,18 +239,18 @@ git -C "${AI_PASSPORT_IDF_ROOT}" status --short
 ### 离线压缩包兜底
 
 重复尝试后所有源都不可达时，乐鑫官方 release 归档是一次完整 checkout 快照
-——已包含 `.git` 与 v5.5.3 的全部子模块——下载后解压即用，不需要任何网络或
+——已包含 `.git` 与 v6.1 的全部子模块——下载后解压即用，不需要任何网络或
 Git 操作：
 
 ```bash
-curl -fL -o /tmp/esp-idf-v5.5.3.zip \
-    https://dl.espressif.com/github_assets/espressif/esp-idf/releases/download/v5.5.3/esp-idf-v5.5.3.zip
+curl -fL -o /tmp/esp-idf-v6.1.zip \
+    https://dl.espressif.com/github_assets/espressif/esp-idf/releases/download/v6.1/esp-idf-v6.1.zip
 mkdir -p "$(dirname "${AI_PASSPORT_IDF_ROOT}")"
-unzip -q /tmp/esp-idf-v5.5.3.zip -d "$(dirname "${AI_PASSPORT_IDF_ROOT}")"
+unzip -q /tmp/esp-idf-v6.1.zip -d "$(dirname "${AI_PASSPORT_IDF_ROOT}")"
 "${AI_PASSPORT_IDF_ROOT}/install.sh" esp32c3
 ```
 
-归档解压后为 `esp-idf-v5.5.3/` 目录（约 1.8 GB）。若 `dl.espressif.com` 较慢，
+归档解压后为 `esp-idf-v6.1/` 目录（约 1.8 GB）。若 `dl.espressif.com` 较慢，
 可使用 `dl.espressif.cn` 主机变体，两者提供同一文件。复用该目录作为安装基础
 前，用归档旁发布的校验和验证解压结果。
 
@@ -265,7 +265,7 @@ python --version
 printf 'IDF_PATH=%s\n' "${IDF_PATH}"
 ```
 
-版本不是严格的 `ESP-IDF v5.5.3` 时必须停止，不得用其他版本生成项目配置。
+版本不是严格的 `ESP-IDF v6.1` 时必须停止，不得用其他版本生成项目配置。
 
 激活只对当前 shell 生效：运行 `export.sh` 必须用带点的形式（或 `source`），
 不能写成 `./export.sh`——那会在子 shell 中执行，当前 shell 不会配置成功
@@ -275,7 +275,7 @@ printf 'IDF_PATH=%s\n' "${IDF_PATH}"
 
 ### 工具链安装失败
 
-工具链下载出现校验和不匹配或归档损坏时，先从选定的 ESP-IDF 5.5.3 checkout
+工具链下载出现校验和不匹配或归档损坏时，先从选定的 ESP-IDF 6.1 checkout
 重新运行安装器，保持相同的 `IDF_TOOLS_PATH` 和下载路线设置。例如在
 Linux/macOS 上：
 
@@ -285,7 +285,7 @@ Linux/macOS 上：
 
 使用中国大陆路线时，按[选择下载路线](#选择下载路线)中的示例，把
 `IDF_GITHUB_ASSETS` 应用于这次调用。
-[ESP-IDF 5.5.3 安装器](https://github.com/espressif/esp-idf/blob/v5.5.3/tools/idf_tools.py)
+[ESP-IDF 6.1 安装器](https://github.com/espressif/esp-idf/blob/v6.1/tools/idf_tools.py)
 会校验已有归档并替换失败的归档，而不是清空全部下载缓存。
 
 下载缓存位于实际 `IDF_TOOLS_PATH` 下的 `dist` 目录。未覆盖路径时，通常为
@@ -308,8 +308,8 @@ Homebrew 等其他 Python 发行方式不一定提供它，应按其证书配置
 Apple Silicon 上的 `tool riscv32-esp-elf has no installed versions` 可能只是
 工具未安装或工具路径错误，不能据此判断架构不匹配。先核对 `IDF_TOOLS_PATH`
 并重新运行 ESP32-C3 安装器。若出现 `bad CPU type in executable`，再检查
-主机、当前 shell／Python 和失败二进制的架构。ESP-IDF 5.5.3 提供
-[原生 macOS ARM64 ESP32-C3 工具链](https://github.com/espressif/esp-idf/blob/v5.5.3/tools/tools.json)，
+主机、当前 shell／Python 和失败二进制的架构。ESP-IDF 6.1 提供
+[原生 macOS ARM64 ESP32-C3 工具链](https://github.com/espressif/esp-idf/blob/v6.1/tools/tools.json)，
 应优先使用。只有确认必须使用仅支持 x86-64 的可执行程序后，才考虑 Rosetta，
 且安装前必须取得批准；它不是 ESP32-C3 的常规前置条件。
 
@@ -383,7 +383,7 @@ docker run --rm \
     -v "${PWD}:/project" \
     -w /project \
     -e IDF_GIT_SAFE_DIR=/project \
-    espressif/idf:v5.5.3 \
+    espressif/idf:v6.1 \
     ./tools/validate.sh --firmware
 ```
 
@@ -421,14 +421,14 @@ idf.py -p <port> monitor
 | 症状 | 处理 |
 | --- | --- |
 | 找不到 `idf.py` | 激活所选安装的 `export.sh`，不得猜测个人 alias。 |
-| ESP-IDF 版本错误 | 停止并并行激活/安装 v5.5.3。 |
+| ESP-IDF 版本错误 | 停止并并行激活/安装 v6.1。 |
 | GitHub 源码或工具下载慢 | 切换到本文的乐鑫中国大陆线路。 |
 | 子模块拉取超时或 shell 报告等待超限 | 先确认 `git status`；若仍在拉取，用更长等待时间或后台重试，再用 `git submodule update --init --recursive` 修复。 |
 | 子模块拉取 404 或反复回到过期镜像 | 检查 `git config --global --get-regexp 'url\..*jihulab'`；清理残留前先获得用户授权。 |
 | 中国大陆组件下载慢 | 在当前终端设置 `IDF_COMPONENT_STORAGE_URL`。 |
 | 组件下载失败 | 检查网络、代理、DNS 和证书，不得通过关闭 TLS 校验绕过。 |
 | 配置缺少已跟踪 defaults | 保留有意配置，再执行 `idf.py set-target esp32c3`。 |
-| 构建来自其他 ESP-IDF | 激活 v5.5.3，执行 `idf.py fullclean`，再 set-target/build。 |
+| 构建来自其他 ESP-IDF | 激活 v6.1，执行 `idf.py fullclean`，再 set-target/build。 |
 | 串口不存在 | 检查线材、枚举、主机/虚拟机 USB 转发和供电。 |
 | 串口被占用 | 关闭 WebSerial、VS Code monitor、`idf.py monitor` 和其他串口客户端。 |
 | 串口 permission denied | 把用户加入平台串口组并重新登录。 |

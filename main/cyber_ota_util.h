@@ -47,7 +47,7 @@ typedef struct {
     const char *board_type;   // 本应用的板型标识
     const char *app_name;
     const char *app_version;
-    const char *idf_version;  // 例如 "v5.5.3"
+    const char *idf_version;  // 例如 "v6.1"
     uint32_t flash_size;
     uint32_t min_free_heap;
 } cyber_ota_body_t;

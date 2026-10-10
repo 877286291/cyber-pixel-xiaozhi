@@ -18,7 +18,7 @@ existing tools; do not replace another ESP-IDF installation.
   whether execution is local, WSL, a VM, container, or remote agent.
 - Check the active `idf.py --version` and the selected installation. An inactive
   shell is not proof the toolchain needs reinstalling. Activate an existing
-  ESP-IDF 5.5.3 in the current shell when available.
+  ESP-IDF 6.1 in the current shell when available.
 - Check the build prerequisites and dependency lock before downloading tools.
   Do not print complete environment variables or authentication configuration.
 - Discover USB/serial access without opening ports when relevant to the user's
@@ -39,7 +39,7 @@ first. After a retry, inspect the new evidence instead of repeating the same
 failed operation indefinitely. If progress needs access or a user choice, stop
 that operation and report the blocker; continue independent safe checks.
 
-Require the selected environment to report ESP-IDF 5.5.3 before generating
+Require the selected environment to report ESP-IDF 6.1 before generating
 configuration. Preserve intentional `sdkconfig` and partition changes. On
 native Windows, use the documented ESP-IDF terminal; the repository's shell
 gate also needs a compatible shell environment. Do not treat POSIX commands as

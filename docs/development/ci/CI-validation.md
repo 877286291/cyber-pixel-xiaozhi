@@ -45,10 +45,10 @@ SHA.
 
 ```bash
 ./tools/validate.sh --static
-source <path-to-esp-idf-v5.5.3>/export.sh
+source <path-to-esp-idf-v6.1>/export.sh
 ./tools/validate.sh --firmware
 ```
 
-Follow the [environment bootstrap](../engineering/environment-setup.md) if ESP-IDF 5.5.3 is
+Follow the [environment bootstrap](../engineering/environment-setup.md) if ESP-IDF 6.1 is
 not installed. Reproduce a CI failure with the same mode locally. Do not
 maintain duplicate validation commands inside the workflow.

@@ -28,7 +28,7 @@ retain the separate authorization requirements for flashing, Git writes, and pub
 
 ## Project and safety baseline
 
-- Target: ESP32-C3, 8 MB Flash, no PSRAM, ESP-IDF 5.5.3.
+- Target: ESP32-C3, 8 MB Flash, no PSRAM, ESP-IDF 6.1.
 - Keep the repository's default partition table minimal: NVS, PHY data, and
   one factory application spanning the rest of the 8 MB Flash. User firmware
   may deliberately change this layout; validate the resulting table and do not
@@ -77,7 +77,7 @@ Run the smallest relevant check while iterating, then run the complete gate befo
 ./tools/validate.sh             # complete gate
 ```
 
-The complete gate requires an activated ESP-IDF 5.5.3 environment. Do not describe a successful build as hardware validation. Final delivery must report these fields separately:
+The complete gate requires an activated ESP-IDF 6.1 environment. Do not describe a successful build as hardware validation. Final delivery must report these fields separately:
 
 ```text
 Build: PASS / FAIL / NOT RUN

@@ -26,7 +26,7 @@ AI 应先完成以下检查：
 
 ## 2. 硬件总览
 
-当前代码针对 ESP32-C3 FoloToy AI Passport，使用 ESP-IDF 5.5.3。MCU **没有 PSRAM**，外设 DMA 和 UI 都使用内部 RAM。
+当前代码针对 ESP32-C3 FoloToy AI Passport，使用 ESP-IDF 6.1。MCU **没有 PSRAM**，外设 DMA 和 UI 都使用内部 RAM。
 
 | 子系统 | 器件/方式 | 总线或资源 | 固件支持 |
 | --- | --- | --- | --- |
@@ -190,7 +190,7 @@ I2C0 使用 SDA GPIO10、SCL GPIO7。ES8311 地址为 7 bit `0x18`，CW2017 为 
 重要规则：
 
 - 不要在同一个 I2C port 上为扫描或单个设备再创建临时 master bus。
-- IDF 5.5.3 中，重复建总线后走错误清理可能解绑正式 SDA/SCL，使两个芯片同时失联。扫描必须用现有总线上的 `i2c_master_probe()`。
+- IDF 6.1 中，重复建总线后走错误清理可能解绑正式 SDA/SCL，使两个芯片同时失联。扫描必须用现有总线上的 `i2c_master_probe()`。
 - `bsp_i2c_scan()` 扫描 0x08–0x77，适合启动诊断；它返回 OK 只表示扫描完成，不表示一定找到设备。
 - CW2017 设备速率明确为 100 kHz。ES8311 控制接口由 `esp_codec_dev` 管理。
 - ES8311 创建控制接口时库 API 要求 8 bit 地址，因此传入 `0x18 << 1`；其他使用 7 bit 地址的 ESP-IDF API 不应照搬此移位。
@@ -238,7 +238,7 @@ Audio demo 的工作任务在 PCM 分块之间检查取消状态，并在页面�
 将音调 demo 扩展为持续 BGM、界面刷新和 NVS 存档并行的应用时，按键后出现的杂音可能来自 PCM 供给中断，即使该按键没有播放音效。修改音效或音量之前，先分别检查以下两条路径：
 
 - **任务供给不及时：** 同时测量 PCM 最大供给间隔、重绘和保存耗时。6 个 DMA descriptor、每个 240 frame，在 16 kHz 且缓冲填满时最多容纳 `6 * 240 / 16000 = 90 ms`；实际剩余余量可能更小。按键回调和 LVGL 锁内不做阻塞操作，纯焦点移动不写 Flash，音频工作任务相对刷屏任务应有足够优先级。任务仍须阻塞或让出 CPU；不要忙循环，也不要未检查应用任务就照抄优先级数值。仍在有意义的状态变化时保存。
-- **Flash/cache 停顿：** Flash 写入或擦除可能关闭缓存，延后默认 I2S 中断。播放与保存并行时，启用 `CONFIG_I2S_ISR_IRAM_SAFE=y`，并核对生成的 `sdkconfig`（只改 defaults 不会覆盖已有配置）。注册的 I2S 回调及其调用链必须满足 IRAM 安全要求，访问的数据放在内部 DRAM；只给回调加 `IRAM_ATTR` 不够。回调中不要打印日志、分配内存或读取 Flash 素材。参见 [ESP-IDF 5.5.3 I2S IRAM 安全说明](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32c3/api-reference/peripherals/i2s.html#iram-safe)。
+- **Flash/cache 停顿：** Flash 写入或擦除可能关闭缓存，延后默认 I2S 中断。播放与保存并行时，启用 `CONFIG_I2S_ISR_IRAM_SAFE=y`，并核对生成的 `sdkconfig`（只改 defaults 不会覆盖已有配置）。注册的 I2S 回调及其调用链必须满足 IRAM 安全要求，访问的数据放在内部 DRAM；只给回调加 `IRAM_ATTR` 不够。回调中不要打印日志、分配内存或读取 Flash 素材。参见 [ESP-IDF 6.1 I2S IRAM 安全说明](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32c3/api-reference/peripherals/i2s.html#iram-safe)。
 
 中断放入 IRAM 并不能让位于 Flash 的音频生产任务持续运行，也不代表缓冲无限。应根据实测停顿和内部 RAM 预算准备排队的 PCM，或在安全的播放边界保存。在最终应用固件上，持续播放 BGM，反复切换选项并确认会实际写入 NVS 的操作，再验证保存和重新载入。对照供给间隔并实机试听：日志无告警或单独播放音调成功，都不能证明并发播放没有杂音。
 
@@ -299,7 +299,7 @@ SOC 准确度取决于电芯与 profile 的匹配程度。本驱动给出的是�
 
 全新机器安装、各操作系统依赖以及国际/中国大陆下载线路统一以
 [环境引导](../development/engineering/environment-setup.zh_CN.md)为准。项目严格使用
-**ESP-IDF 5.5.3**。不要直接使用系统中的任意 `idf.py`，也不要将 Arduino、
+**ESP-IDF 6.1**。不要直接使用系统中的任意 `idf.py`，也不要将 Arduino、
 PlatformIO 或其他 ESP-IDF 版本生成的配置混入当前工程。
 编译优先使用 `./tools/validate.sh --firmware` 生成并验证合并固件，烧录优先把该
 镜像写入 `0x0`；直接 `idf.py build/flash` 只用于增量开发。
@@ -317,16 +317,16 @@ sudo apt install -y git wget flex bison gperf python3 python3-pip \
 
 WSL 可以用于编译，但烧录和串口监视需要将 USB 设备转发给 WSL；若没有可靠的 USB 转发，可在 WSL 编译、在原生 Linux 或 Windows ESP-IDF 环境烧录。
 
-### 12.2 安装 ESP-IDF 5.5.3
+### 12.2 安装 ESP-IDF 6.1
 
 建议把 ESP-IDF 放在仓库之外，避免工具链文件被误提交。以下路径只是示例，可按本机目录调整：
 
 ```bash
 mkdir -p "$HOME/esp"
 cd "$HOME/esp"
-git clone --recursive --branch v5.5.3 \
-    https://github.com/espressif/esp-idf.git esp-idf-v5.5.3
-cd esp-idf-v5.5.3
+git clone --recursive --branch v6.1 \
+    https://github.com/espressif/esp-idf.git esp-idf-v6.1
+cd esp-idf-v6.1
 ./install.sh esp32c3
 ```
 
@@ -339,11 +339,11 @@ git submodule update --init --recursive
 每个新终端都需要激活该环境：
 
 ```bash
-source "$HOME/esp/esp-idf-v5.5.3/export.sh"
+source "$HOME/esp/esp-idf-v6.1/export.sh"
 idf.py --version
 ```
 
-版本输出必须为 ESP-IDF v5.5.3。文档和自动化不得依赖机器专用 alias，AI
+版本输出必须为 ESP-IDF v6.1。文档和自动化不得依赖机器专用 alias，AI
 也不得擅自修改 shell 启动文件。
 
 ### 12.3 获取工程依赖并首次构建
@@ -351,7 +351,7 @@ idf.py --version
 进入项目根目录后执行：
 
 ```bash
-source <ESP-IDF-v5.5.3-路径>/export.sh
+source <ESP-IDF-v6.1-路径>/export.sh
 idf.py --version
 idf.py set-target esp32c3
 idf.py reconfigure
@@ -411,13 +411,13 @@ idf.py build
 | 症状 | 处理方式 |
 | --- | --- |
 | `idf.py: command not found` | 当前终端未 source ESP-IDF 的 `export.sh` |
-| IDF 版本不是 5.5.x | 激活 5.5.3 环境；不要继续用错误版本生成配置 |
+| IDF 版本不是 6.1 | 激活 6.1 环境；不要继续用错误版本生成配置 |
 | Python 包或工具链缺失 | 在对应 IDF 目录重新执行 `./install.sh esp32c3` |
 | 组件下载失败 | 检查网络、代理和证书；不要伪造 `managed_components` 内容 |
 | 配置与源码不一致 | 先 `idf.py reconfigure`；仍异常时再考虑 `idf.py fullclean` |
 | 串口 permission denied | 加入 `dialout` 并重新登录，确认设备节点所属组 |
 | 能烧录但无日志 | 确认 USB Serial/JTAG 配置和正确端口，不要默认改用 GPIO21 UART TX |
-| 构建目录来自其他 IDF | 激活 5.5.3 后 `idf.py fullclean`，再 set-target/build |
+| 构建目录来自其他 IDF | 激活 6.1 后 `idf.py fullclean`，再 set-target/build |
 
 环境验收标准是：`idf.py --version` 正确、`idf.py build` 无错误、设备可烧录、monitor 能看到 `FoloToy AI Passport BSP demo 启动`，并且启动后没有持续重启或 assert。
 
@@ -426,7 +426,7 @@ idf.py build
 默认优先运行 `./tools/validate.sh --firmware`。以下命令仅用于增量开发：
 
 ```bash
-source <ESP-IDF-v5.5.3-路径>/export.sh
+source <ESP-IDF-v6.1-路径>/export.sh
 idf.py --version
 idf.py set-target esp32c3   # 新 checkout 或目标变化时
 idf.py build

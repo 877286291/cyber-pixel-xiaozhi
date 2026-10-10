@@ -4,7 +4,7 @@
 
 # 构建与验证（Build & Test）
 
-使用 ESP-IDF 5.5.3。全新机器或缺少工具链时，先按
+使用 ESP-IDF 6.1。全新机器或缺少工具链时，先按
 [环境引导](environment-setup.zh_CN.md)完成安装。
 
 > **向设备下载（烧录）新固件前，无需备份设备内部原有固件。** 不要求先读出
@@ -19,8 +19,8 @@
 > `idf.py flash` 只作为增量开发命令，不作为默认交付方式。
 
 ```bash
-source <ESP-IDF-v5.5.3-路径>/export.sh
-idf.py --version             # 必须输出 ESP-IDF v5.5.3
+source <ESP-IDF-v6.1-路径>/export.sh
+idf.py --version             # 必须输出 ESP-IDF v6.1
 ./tools/validate.sh --firmware # 优先：编译并验证 0x0 合并固件
 idf.py set-target esp32c3     # 配置目标芯片（fresh checkout 后/换 target 后运行）
 idf.py build                  # 可选：增量 app 编译
@@ -34,7 +34,7 @@ target 或已跟踪 defaults 时，先保留有意的本地设置，再运行
 
 ### 加速重复编译
 
-ccache 能在源码需要重新编译时复用已有编译结果。ESP-IDF 5.5.3 默认不启用
+ccache 能在源码需要重新编译时复用已有编译结果。ESP-IDF 6.1 默认不启用
 ccache。激活 ESP-IDF 后，先确认 ccache 可用，再为单次构建启用（以下命令
 同样适用于 Linux/macOS shell 和 Windows 原生 ESP-IDF 终端）：
 
@@ -53,7 +53,7 @@ idf.py build
 这是 `idf.py` 选项，不是 `sdkconfig` 或 `menuconfig` 配置。需要在项目或 CI
 中重复启用时，显式传入 `--ccache`，或在该构建环境设置
 `IDF_CCACHE_ENABLE=1`；不要擅自修改 shell 启动文件。参见
-[ESP-IDF 5.5.3 选项定义](https://github.com/espressif/esp-idf/blob/v5.5.3/tools/idf_py_actions/core_ext.py)。
+[ESP-IDF 6.1 选项定义](https://github.com/espressif/esp-idf/blob/v6.1/tools/idf_py_actions/core_ext.py)。
 
 先检查当前缓存配置，不要假定固定路径：
 
@@ -76,7 +76,7 @@ Microsoft Defender 可使用其
 范围内。不要例行排除整个 ESP-IDF 安装目录、工具链目录或工程，也不要关闭
 实时防护。
 
-仓库提交 `dependencies.lock` 以固定 ESP-IDF Managed Components 的解析结果。修改 `idf_component.yml` 后必须使用 ESP-IDF 5.5.3 重新生成锁文件、review 版本变化并与 manifest 一起提交；普通构建不应产生未提交的锁文件差异。
+仓库提交 `dependencies.lock` 以固定 ESP-IDF Managed Components 的解析结果。修改 `idf_component.yml` 后必须使用 ESP-IDF 6.1 重新生成锁文件、review 版本变化并与 manifest 一起提交；普通构建不应产生未提交的锁文件差异。
 
 固件门禁使用全新的临时构建目录，并从仓库 `sdkconfig.defaults` 生成隔离的 `sdkconfig`。它不会读取或覆盖开发者根目录的 `sdkconfig`。清理临时构建前，先归档已验证固件及匹配的调试产物，再把已验证合并镜像复制到 `build/FoloToy-AI-Passport-full.bin`。门禁同时验证[当前配置的固件布局](firmware-layout.zh_CN.md)：从 `flash_args` 读取镜像偏移，检查分区表 MD5、边界和不重叠，并确认应用从所配置的 app 分区起点开始且未超出分区。允许用户自定义分区布局。
 
@@ -138,7 +138,7 @@ cc -std=c11 -Wall -Wextra -Werror -Imain \
 ./tools/validate.sh             # 完整验证
 ```
 
-完整验证要求预先激活 ESP-IDF 5.5.3。CI 与本地使用同一脚本；若 CI 和本地行为不同，应先修复脚本或环境，而不是维护两份命令。
+完整验证要求预先激活 ESP-IDF 6.1。CI 与本地使用同一脚本；若 CI 和本地行为不同，应先修复脚本或环境，而不是维护两份命令。
 
 涉及物理外设的改动必须在真机运行硬件指南验收清单，并把“编译通过”与“硬件验证通过”分开记录。
 

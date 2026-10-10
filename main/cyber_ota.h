@@ -59,11 +59,34 @@ void cyber_ota_notify_net(bool connected);
 // 读取当前快照。可从任意任务调用（含 LVGL 任务），临界区内完成，不阻塞。
 void cyber_ota_get_snapshot(cyber_ota_snapshot_t *out);
 
+// 挂起/恢复后台检查。语音会话建立后置 true：一次 check 要开一条 TLS，实测与
+// WebSocket 会话叠加时堆最低点只剩 32716 B，对话中途触发会威胁音频缓冲。
+// 只延后请求，不改变已发布的状态；恢复后 worker 自然接上原来的节奏。
+// 可从任意任务调用（一字节写，无锁）。
+void cyber_ota_set_defer(bool defer);
+
+// 本模块此刻是否正握着一条 TLS 连接（含它的全部收发缓冲）。
+//
+// 存在的理由是一次实测事故：OTA 检查在用户按键前 3 秒发出，它的 TLS 与随后的
+// WebSocket 握手叠加，把堆一路挤到最低 108 字节，直接导致 libopus 的编码器分配
+// 失败（OPUS_ALLOC_FAIL），整轮对话没有声音。set_defer 只能拦住"下一次"检查，
+// 拦不住已经在飞的那一次，所以建连方需要一个"现在有没有人在占 TLS"的即时信号。
+//
+// 语义很窄：它只描述"内存正被占着"，不表示"这一轮检查还没做完"。使用者应该是
+// "等一下再建连"，而不是"拿它当健康检查"。
+bool cyber_ota_busy(void);
+
 // 读取对话端点配置（握手用）。由本模块持有 NVS 键，避免调用方重复定义字符串键。
 // 任一字段缺失时写入空串。返回 ESP_OK 表示至少 url 非空。
 // 可从任意任务调用。
 esp_err_t cyber_ota_get_ws_config(char *url, size_t url_cap,
                                   char *token, size_t token_cap);
+
+// NVS 里是否已有对话端点（ws 地址）。只做一次存在性查询，不读内容，因此不需要
+// 调用方准备缓冲——用它来判断"能不能跳过等待、直接建连"，比 get_ws_config 更合适：
+// 后者要求缓冲不小于实际存储值，用小缓冲会被 NVS 的长度校验拒绝，从而把"有"误判
+// 成"无"。可从任意任务调用。
+bool cyber_ota_has_ws_config(void);
 
 // 本机 STA MAC（"aa:bb:cc:dd:ee:ff"）。Device-Id 与 OTA 请求体必须同源，
 // 因此由本模块统一提供，避免两处各自取一次而产生漂移。

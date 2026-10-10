@@ -11,7 +11,7 @@ product/device acceptance. The [index](README.md) documents installation and use
 ## Deterministic checks
 
 Run `./tools/validate.sh --static` during iteration and the complete
-`./tools/validate.sh` gate in ESP-IDF 5.5.3 before delivery. In addition to the
+`./tools/validate.sh` gate in ESP-IDF 6.1 before delivery. In addition to the
 existing repository/firmware checks, these run:
 
 - `tests/test_install_passport_skills.py`: relative discovery links, idempotence,

@@ -162,3 +162,50 @@ int ble_gap_adv_start(uint8_t address_type, const void *address, int duration,
     return 0;
 }
 int ble_gap_adv_stop(void) { return 0; }
+
+// LVGL + UI + radio no-op boundary so the demo lifecycle tests link without a
+// display/panel driver. Each create returns a fresh pool entry (never reused,
+// never freed); styling/alignment/text are ignored.
+static lv_obj_t g_lv_objs[512];
+static lv_timer_t g_lv_timers[64];
+static unsigned g_lv_obj_idx, g_lv_timer_idx;
+
+uint32_t lv_color_hex(uint32_t color) { return color; }
+lv_obj_t *lv_obj_create(lv_obj_t *parent) { (void)parent; return &g_lv_objs[g_lv_obj_idx++]; }
+lv_obj_t *lv_label_create(lv_obj_t *parent) { (void)parent; return &g_lv_objs[g_lv_obj_idx++]; }
+void lv_obj_set_size(lv_obj_t *object, int width, int height) { (void)object; (void)width; (void)height; }
+void lv_obj_set_width(lv_obj_t *object, int width) { (void)object; (void)width; }
+void lv_obj_set_style_radius(lv_obj_t *object, int radius, int selector) { (void)object; (void)radius; (void)selector; }
+void lv_obj_set_style_bg_color(lv_obj_t *object, uint32_t color, int selector) { (void)object; (void)color; (void)selector; }
+void lv_obj_set_style_border_width(lv_obj_t *object, int width, int selector) { (void)object; (void)width; (void)selector; }
+void lv_obj_set_style_text_color(lv_obj_t *object, uint32_t color, int selector) { (void)object; (void)color; (void)selector; }
+void lv_obj_set_style_text_align(lv_obj_t *object, int align, int selector) { (void)object; (void)align; (void)selector; }
+void lv_obj_set_style_text_font(lv_obj_t *object, const lv_font_t *font, int selector) { (void)object; (void)font; (void)selector; }
+void lv_obj_center(lv_obj_t *object) { (void)object; }
+void lv_obj_align(lv_obj_t *object, int align, int x, int y) { (void)object; (void)align; (void)x; (void)y; }
+void lv_obj_delete(lv_obj_t *object) { (void)object; }
+void lv_label_set_text_fmt(lv_obj_t *object, const char *format, ...) { (void)object; (void)format; }
+void lv_label_set_long_mode(lv_obj_t *object, int mode) { (void)object; (void)mode; }
+void lv_screen_load(lv_obj_t *screen) { (void)screen; }
+lv_timer_t *lv_timer_create(void (*callback)(lv_timer_t *), unsigned period, void *data) {
+    (void)callback; (void)period; (void)data;
+    return &g_lv_timers[g_lv_timer_idx++];
+}
+void lv_timer_delete(lv_timer_t *timer) { (void)timer; }
+
+lv_obj_t *ui_pixel_screen_create(const char *title) { (void)title; return &g_lv_objs[g_lv_obj_idx++]; }
+lv_obj_t *ui_pixel_panel_create(lv_obj_t *parent, int x, int y, int w, int h,
+                                uint32_t color) {
+    (void)parent; (void)x; (void)y; (void)w; (void)h; (void)color;
+    return &g_lv_objs[g_lv_obj_idx++];
+}
+lv_obj_t *ui_pixel_mascot_create(lv_obj_t *parent, int x, int y) {
+    (void)parent; (void)x; (void)y;
+    return &g_lv_objs[g_lv_obj_idx++];
+}
+
+int esp_sleep_get_wakeup_cause(void) { return 0; }
+esp_err_t esp_wifi_scan_get_ap_num(uint16_t *count) { *count = 0; return ESP_OK; }
+esp_err_t esp_wifi_scan_get_ap_records(uint16_t *count, wifi_ap_record_t *records) {
+    (void)records; *count = 0; return ESP_OK;
+}

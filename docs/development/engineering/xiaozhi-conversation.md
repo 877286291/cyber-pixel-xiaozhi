@@ -119,6 +119,38 @@ Per-frame sample count is `rate / 1000 * 60`; PCM bytes double it for 16-bit
 mono. These values must be recomputed, not copied, if the server ever declares a
 different frame duration.
 
+### Audio codec resources
+
+Encoding and decoding run on the `espressif/esp_audio_codec` component
+(`esp_opus_*` API; a prebuilt library for the C3). Its working buffers are
+allocated from the heap when a handle is `open()`ed and released when it is
+`close()`d. The firmware keeps the original half-duplex policy on top of that:
+it opens the encoder only while capturing and the decoder only while playing,
+and closes each when the phase leaves it, so idle heap is returned to the
+system. That idle return is what lets a conversation session and an OTA check
+coexist on a board without PSRAM.
+
+| Moment | Free heap | Largest block |
+| --- | --- | --- |
+| Phase change to capture, before the encoder | 58976 | 43008 |
+| After `esp_opus_enc_open` (16000 Hz) | 34336 | 19456 |
+| After the phase returns to idle, encoder closed | 67476 | 45056 |
+| Phase change to playback, before the decoder | 67668 | 45056 |
+| After `esp_opus_dec_open` (24000 Hz) | 49208 | 26624 |
+
+The encoder handle costs about 24.6 KB of heap, the decoder about 18 KB. Because
+half-duplex guarantees the two are never alive at once, the peak is the larger
+of the two, and both are released when a session ends.
+
+The worker task stack is 28672 bytes. It is sized, not guessed, because an
+earlier build used the `78/esp-opus` component, which was compiled with
+`-DUSE_ALLOCA`: its Opus/SILK working buffers landed on the task stack instead
+of the heap, and a 16 KB stack overflowed inside `silk_find_pitch_lags_FIX`
+(`Stack protection fault`) the moment capture began. Moving to the heap-based
+component removed that failure; the measured high-water mark after a full
+round trip is a 4616-byte remainder, i.e. about 24 KB used, so 28672 is a safe
+figure and the margin is not accidental.
+
 ## Server keepalive
 
 The server sends an **empty text frame every ~10 seconds**. The protocol
@@ -156,7 +188,7 @@ connection buys nothing.
 
 ## Measured results
 
-Board: ESP32-C3, 8 MB Flash, no PSRAM, ESP-IDF 5.5.3. Firmware `4e9dcb1` with
+Board: ESP32-C3, 8 MB Flash, no PSRAM, ESP-IDF 6.1. Firmware `4e9dcb1` with
 the `hello` diagnostics added. Credentials were a temporary test account
 returned by the activation endpoint, and the endpoint was
 `wss://api.tenclass.net/xiaozhi/v1/`.
@@ -198,16 +230,20 @@ adding another concurrent TLS client.
 
 ## What is not verified
 
-The transport, the handshake, the keepalive, and the state machine are verified
-on hardware. The audio path is not implemented, so:
+The transport, the handshake, the keepalive, the state machine, and the audio
+path are all verified on hardware. A full round trip was observed: the uplink
+streamed 45 encoded frames (about 2.8 s of speech at 16000 Hz), the server
+returned an `stt` and then a `tts` stream, the downlink decoded and played back
+for about 13.7 s, and the session returned to `READY` with the decoder
+released. The stack high-water mark during that round trip was a 4616-byte
+remainder on a 28672-byte stack.
 
-- no `stt` or `tts` message has been observed end to end, and the subtitle
-  rendering has only been exercised by the host tests;
-- the server returned nothing at all for a `listen` cycle with zero bytes of
-  audio, so an empty recording is not a usable substitute for a real one;
-- the 24000 Hz downlink rate is recorded from the server's declaration. It has
-  not been confirmed against a received audio frame, because nothing decodes
-  frames yet.
+What remains unverified:
+
+- the subtitle rendering has only been exercised by the host tests, not against
+  the live `stt` / `tts` text on the display;
+- the 24000 Hz downlink rate is confirmed by a successful decode, but has not
+  been checked sample-for-sample against a reference capture.
 
 ## References
 

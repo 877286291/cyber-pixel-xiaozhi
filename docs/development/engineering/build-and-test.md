@@ -4,7 +4,7 @@
 
 # Build and Test
 
-Use ESP-IDF 5.5.3. On a clean machine or when the toolchain is missing, follow
+Use ESP-IDF 6.1. On a clean machine or when the toolchain is missing, follow
 the [environment bootstrap](environment-setup.md) first.
 
 > **No original-firmware backup is required before downloading (flashing) new
@@ -22,8 +22,8 @@ the [environment bootstrap](environment-setup.md) first.
 > default delivery path.
 
 ```bash
-source <path-to-esp-idf-v5.5.3>/export.sh
-idf.py --version             # must report ESP-IDF v5.5.3
+source <path-to-esp-idf-v6.1>/export.sh
+idf.py --version             # must report ESP-IDF v6.1
 ./tools/validate.sh --firmware # preferred: build and verify merged 0x0 image
 idf.py set-target esp32c3     # fresh checkout or changed target
 idf.py build                  # optional incremental application build
@@ -39,7 +39,7 @@ regenerated.
 ### Speeding up repeated builds
 
 ccache can reuse previous compiler results when sources need to be compiled
-again. ESP-IDF 5.5.3 disables it by default. After activating ESP-IDF, check that
+again. ESP-IDF 6.1 disables it by default. After activating ESP-IDF, check that
 ccache is available and enable it for an individual build (the same command
 works in Linux/macOS shells and native Windows ESP-IDF terminals):
 
@@ -59,7 +59,7 @@ idf.py build
 This is an `idf.py` option, not a `sdkconfig` or `menuconfig` setting. For
 repeatable project or CI builds, pass `--ccache` explicitly or set
 `IDF_CCACHE_ENABLE=1` in that build environment; do not silently edit shell
-startup files. See the [ESP-IDF 5.5.3 option definition](https://github.com/espressif/esp-idf/blob/v5.5.3/tools/idf_py_actions/core_ext.py).
+startup files. See the [ESP-IDF 6.1 option definition](https://github.com/espressif/esp-idf/blob/v6.1/tools/idf_py_actions/core_ext.py).
 
 Inspect the active cache configuration instead of assuming a fixed path:
 
@@ -85,7 +85,7 @@ applicable security policy, then limit any exception to the smallest confirmed
 scope. Do not routinely exclude the entire ESP-IDF installation, tools tree,
 or project, and do not disable real-time protection.
 
-The tracked `dependencies.lock` pins Managed Component resolution. After changing an `idf_component.yml`, regenerate the lock with ESP-IDF 5.5.3, review version changes, and commit it with the manifest. An ordinary build must not leave an unexplained lock-file diff.
+The tracked `dependencies.lock` pins Managed Component resolution. After changing an `idf_component.yml`, regenerate the lock with ESP-IDF 6.1, review version changes, and commit it with the manifest. An ordinary build must not leave an unexplained lock-file diff.
 
 Firmware validation uses a fresh temporary build directory and an isolated `sdkconfig` generated from the tracked defaults. It does not consume or overwrite a developer's root `sdkconfig`. Before cleaning the temporary build, it archives the verified firmware and matching debug artifacts, then copies the verified merged image to `build/FoloToy-AI-Passport-full.bin`. The gate also validates the [configured firmware layout](firmware-layout.md): image offsets from `flash_args`, partition-table MD5, bounds and non-overlap, and an application that starts in and fits its configured app partition. User-defined partition layouts are allowed.
 

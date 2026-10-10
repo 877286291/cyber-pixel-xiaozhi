@@ -14,7 +14,7 @@ from that checkout; never infer a developer-specific IDF path.
 
 ## Build the requested configuration
 
-1. Confirm ESP-IDF 5.5.3 is activated. If missing, use `passport-setup` when
+1. Confirm ESP-IDF 6.1 is activated. If missing, use `passport-setup` when
    available or its environment-setup document. Obtain required network/system
    permissions rather than bypassing them.
 2. Check tracked defaults, dependencies, and partitions against the requested

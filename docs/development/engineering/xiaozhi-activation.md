@@ -100,7 +100,7 @@ a populated system-info body the call is a `POST`.
   "mac_address": "aa:bb:cc:dd:ee:ff",
   "chip_model_name": "esp32c3",
   "chip_info": { "model": 5, "cores": 1, "revision": 3, "features": 0 },
-  "application": { "name": "cyber-pixel-xiaozhi", "version": "0.1.0", "idf_version": "v5.5.3" },
+  "application": { "name": "cyber-pixel-xiaozhi", "version": "0.1.0", "idf_version": "v6.1" },
   "partition_table": [],
   "ota": { "label": "factory" },
   "board": { "type": "cyber-pixel-xiaozhi", "mac": "aa:bb:cc:dd:ee:ff" }

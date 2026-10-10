@@ -24,7 +24,7 @@
 
 ## 项目与安全基线
 
-- 目标平台：ESP32-C3、8 MB Flash、无 PSRAM、ESP-IDF 5.5.3。
+- 目标平台：ESP32-C3、8 MB Flash、无 PSRAM、ESP-IDF 6.1。
 - 仓库默认分区表保持最简：只包含 NVS、PHY data，以及占用 8 MB Flash
   剩余空间的单个 factory app。用户固件可以按需求明确调整布局；修改后必须
   验证结果，不得把产品专用分区变成模板的强制契约。
@@ -72,7 +72,7 @@
 ./tools/validate.sh             # 完整门禁
 ```
 
-完整门禁要求已激活 ESP-IDF 5.5.3 环境。不得把编译成功描述成硬件验证成功。最终交付必须分别报告：
+完整门禁要求已激活 ESP-IDF 6.1 环境。不得把编译成功描述成硬件验证成功。最终交付必须分别报告：
 
 ```text
 Build: PASS / FAIL / NOT RUN

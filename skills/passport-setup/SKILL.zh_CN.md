@@ -17,7 +17,7 @@ description: 初次使用 FoloToy AI Passport、工具缺失或工具链激活�
 - 执行 `git status --short --branch`；识别系统、架构、shell，以及本地、
   WSL、虚拟机、容器或远程 agent 等运行环境。
 - 检查当前 `idf.py --version` 与所选安装。shell 未激活不代表需要重装
-  工具链；存在 ESP-IDF 5.5.3 时优先在当前 shell 激活。
+  工具链；存在 ESP-IDF 6.1 时优先在当前 shell 激活。
 - 下载前检查构建依赖和依赖锁；不要打印完整环境变量或认证配置。
 - 与需求有关时，只读枚举 USB／串口而不打开端口。编译就绪与能够访问用户
   的实体设备是不同的状态。
@@ -33,7 +33,7 @@ description: 初次使用 FoloToy AI Passport、工具缺失或工具链激活�
 确定准确目标并先询问。重试后检查新证据，不无限重复同一个失败动作。
 进展需要权限或用户选择时，停止该动作并说明阻碍，继续可独立进行的安全检查。
 
-生成配置前，确认所选环境报告 ESP-IDF 5.5.3。保留有意设置的 `sdkconfig`
+生成配置前，确认所选环境报告 ESP-IDF 6.1。保留有意设置的 `sdkconfig`
 与分区修改。原生 Windows 使用文档指定的 ESP-IDF 终端；仓库 shell 门禁
 还需要兼容的 shell 环境。不得把 POSIX 命令当 PowerShell 命令，也不得声称
 WSL 天然具备 USB 访问能力。

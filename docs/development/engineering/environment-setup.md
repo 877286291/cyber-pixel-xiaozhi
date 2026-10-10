@@ -6,7 +6,7 @@
 
 This document lets an AI agent bootstrap a clean checkout without relying on a
 developer-specific shell function, absolute path, IDE, or preinstalled ESP-IDF.
-The required baseline is ESP-IDF 5.5.3 for ESP32-C3.
+The required baseline is ESP-IDF 6.1 for ESP32-C3.
 
 ## Agent contract
 
@@ -17,7 +17,7 @@ Before installing anything:
 2. Detect the operating system and architecture. Check for an already activated
    ESP-IDF before downloading another copy.
 3. Reuse an existing installation only when `idf.py --version` reports
-   `ESP-IDF v5.5.3`. Install other versions side by side; do not replace them.
+   `ESP-IDF v6.1`. Install other versions side by side; do not replace them.
 4. Ask for approval before using `sudo`, installing system packages, writing
    outside the repository, changing group membership, or downloading through a
    restricted network.
@@ -59,13 +59,13 @@ Do not invent a mirror URL for this project. If the supplied repository URL is
 unreachable, ask the user for an authorized mirror or archive.
 
 The Espressif Git service mirror hosts the full `esp-idf` history and every
-v5.5.3 submodule repository (`espressif/esp32-wifi-lib`, `espressif/esp-lwip`,
-`ThrowTheSwitch/CMock`, and so on). Because the v5.5.3 `.gitmodules` entries are
+v6.1 submodule repository (`espressif/esp32-wifi-lib`, `espressif/esp-lwip`,
+`ThrowTheSwitch/CMock`, and so on). Because the v6.1 `.gitmodules` entries are
 relative URLs, cloning the parent repository from the mirror resolves every
 submodule to the same mirror automatically; no separate submodule rewrite is
 needed. Cloning from the mirror leaves a working checkout identical to the
 GitHub clone: verify the tag commit matches
-`https://github.com/espressif/esp-idf/releases/tag/v5.5.3` (currently
+`https://github.com/espressif/esp-idf/releases/tag/v6.1` (currently
 `b31fcc7a314a44ad992b58f589f7d1d8a4fadff6`).
 
 Legacy mirror installers sometimes write a global per-repository `insteadOf`
@@ -125,7 +125,7 @@ both are host-level changes and may require interaction.
 ### Windows and WSL2
 
 For native Windows, use Espressif's official ESP-IDF Tools Installer and select
-ESP-IDF v5.5.3. Run later commands in the installer-created ESP-IDF PowerShell or
+ESP-IDF v6.1. Run later commands in the installer-created ESP-IDF PowerShell or
 Command Prompt. Do not translate POSIX activation commands literally into
 PowerShell.
 
@@ -133,20 +133,20 @@ WSL2 can run the Linux build flow. USB flashing and monitoring require a device
 forwarded into WSL; otherwise build in WSL and flash from an activated native
 Windows ESP-IDF terminal.
 
-## Install ESP-IDF 5.5.3
+## Install ESP-IDF 6.1
 
 Use a location outside this repository and without spaces. The variable below
 is task-specific and can be overridden by the user:
 
 ```bash
-export AI_PASSPORT_IDF_ROOT="${AI_PASSPORT_IDF_ROOT:-${HOME}/esp/esp-idf-v5.5.3}"
+export AI_PASSPORT_IDF_ROOT="${AI_PASSPORT_IDF_ROOT:-${HOME}/esp/esp-idf-v6.1}"
 ```
 
 ### International route
 
 ```bash
 mkdir -p "$(dirname "${AI_PASSPORT_IDF_ROOT}")"
-git clone --branch v5.5.3 --recursive \
+git clone --branch v6.1 --recursive \
     https://github.com/espressif/esp-idf.git \
     "${AI_PASSPORT_IDF_ROOT}"
 "${AI_PASSPORT_IDF_ROOT}/install.sh" esp32c3
@@ -171,14 +171,14 @@ rewrite and without global Git configuration:
 
 ```bash
 mkdir -p "$(dirname "${AI_PASSPORT_IDF_ROOT}")"
-git clone --branch v5.5.3 --recursive \
+git clone --branch v6.1 --recursive \
     https://git.espressif.com.cn/espressif/esp-idf.git \
     "${AI_PASSPORT_IDF_ROOT}"
 IDF_GITHUB_ASSETS=dl.espressif.cn/github_assets \
     "${AI_PASSPORT_IDF_ROOT}/install.sh" esp32c3
 ```
 
-The mirror has published the same v5.5.3 tag commit as GitHub
+The mirror has published the same v6.1 tag commit as GitHub
 (`b31fcc7a314a44ad992b58f589f7d1d8a4fadff6`), and it hosts the submodule
 repositories themselves, so the checkout is identical to the GitHub clone.
 
@@ -187,7 +187,7 @@ repositories themselves, so the checkout is identical to the GitHub clone.
 ```bash
 export AI_PASSPORT_GITEE_TOOLS_ROOT="${AI_PASSPORT_GITEE_TOOLS_ROOT:-${HOME}/esp/esp-gitee-tools}"
 mkdir -p "$(dirname "${AI_PASSPORT_IDF_ROOT}")"
-git clone --branch v5.5.3 \
+git clone --branch v6.1 \
     https://gitee.com/EspressifSystems/esp-idf.git \
     "${AI_PASSPORT_IDF_ROOT}"
 git clone https://gitee.com/EspressifSystems/esp-gitee-tools.git \
@@ -204,7 +204,7 @@ versions.
 
 ### Submodule pulls and long waits
 
-`esp-idf` v5.5.3 bundles more than twenty submodules, and several of them
+`esp-idf` v6.1 bundles more than twenty submodules, and several of them
 (`components/esp_wifi/lib`, `components/esp_phy/lib`,
 `components/bt/controller/lib_esp32c3_family`) are large prebuilt libraries.
 A `git submodule update --init --recursive` can therefore run for minutes with
@@ -276,18 +276,18 @@ use the paths printed by the latest `git status`; do not copy example paths.
 
 If every source is unreachable after repeated attempts, the official Espressif
 release archive is a complete checkout snapshot — it already contains `.git`
-and every v5.5.3 submodule — so unpacking it needs no network or Git operation
+and every v6.1 submodule — so unpacking it needs no network or Git operation
 after download:
 
 ```bash
-curl -fL -o /tmp/esp-idf-v5.5.3.zip \
-    https://dl.espressif.com/github_assets/espressif/esp-idf/releases/download/v5.5.3/esp-idf-v5.5.3.zip
+curl -fL -o /tmp/esp-idf-v6.1.zip \
+    https://dl.espressif.com/github_assets/espressif/esp-idf/releases/download/v6.1/esp-idf-v6.1.zip
 mkdir -p "$(dirname "${AI_PASSPORT_IDF_ROOT}")"
-unzip -q /tmp/esp-idf-v5.5.3.zip -d "$(dirname "${AI_PASSPORT_IDF_ROOT}")"
+unzip -q /tmp/esp-idf-v6.1.zip -d "$(dirname "${AI_PASSPORT_IDF_ROOT}")"
 "${AI_PASSPORT_IDF_ROOT}/install.sh" esp32c3
 ```
 
-The archive expands to a `esp-idf-v5.5.3/` directory (about 1.8 GB). Use the
+The archive expands to a `esp-idf-v6.1/` directory (about 1.8 GB). Use the
 `dl.espressif.cn` host variant if `dl.espressif.com` is slow; both serve the
 same file. Validate the expanded tree with the checksum released next to the
 archive before reusing it as an installation base.
@@ -304,7 +304,7 @@ python --version
 printf 'IDF_PATH=%s\n' "${IDF_PATH}"
 ```
 
-Stop if the reported version is not exactly `ESP-IDF v5.5.3`. Do not generate
+Stop if the reported version is not exactly `ESP-IDF v6.1`. Do not generate
 project configuration with another version.
 
 Activation is shell-scoped: run `export.sh` with a leading dot (or `source`),
@@ -316,7 +316,7 @@ If a custom `IDF_TOOLS_PATH` was used during install, set it again before every
 ### Toolchain install failures
 
 For a checksum mismatch or corrupted toolchain download, first rerun the
-installer from the selected ESP-IDF 5.5.3 checkout, keeping the same
+installer from the selected ESP-IDF 6.1 checkout, keeping the same
 `IDF_TOOLS_PATH` and download-route settings. For example, on Linux/macOS:
 
 ```bash
@@ -325,7 +325,7 @@ installer from the selected ESP-IDF 5.5.3 checkout, keeping the same
 
 If using the mainland China route, apply `IDF_GITHUB_ASSETS` to this invocation
 as shown in [Choose a download route](#choose-a-download-route). The
-[ESP-IDF 5.5.3 installer](https://github.com/espressif/esp-idf/blob/v5.5.3/tools/idf_tools.py)
+[ESP-IDF 6.1 installer](https://github.com/espressif/esp-idf/blob/v6.1/tools/idf_tools.py)
 validates existing archives and replaces the failed archive rather than
 clearing all cached downloads.
 
@@ -353,8 +353,8 @@ On Apple Silicon, `tool riscv32-esp-elf has no installed versions` can mean the
 tool has not been installed or the tools path is wrong; it does not establish
 an architecture mismatch. Verify `IDF_TOOLS_PATH` and rerun the ESP32-C3
 installer first. For `bad CPU type in executable`, check the host, active
-shell/Python, and failing binary architectures. ESP-IDF 5.5.3 provides a
-[native macOS ARM64 ESP32-C3 toolchain](https://github.com/espressif/esp-idf/blob/v5.5.3/tools/tools.json);
+shell/Python, and failing binary architectures. ESP-IDF 6.1 provides a
+[native macOS ARM64 ESP32-C3 toolchain](https://github.com/espressif/esp-idf/blob/v6.1/tools/tools.json);
 prefer it. Only consider Rosetta after confirming that a required executable
 is x86-64-only, and obtain approval before installing it. It is not a routine
 ESP32-C3 prerequisite.
@@ -439,7 +439,7 @@ docker run --rm \
     -v "${PWD}:/project" \
     -w /project \
     -e IDF_GIT_SAFE_DIR=/project \
-    espressif/idf:v5.5.3 \
+    espressif/idf:v6.1 \
     ./tools/validate.sh --firmware
 ```
 
@@ -487,14 +487,14 @@ acceptance path.
 | Symptom | Action |
 | --- | --- |
 | `idf.py` not found | Activate the selected installation's `export.sh`; do not guess a private alias. |
-| Wrong ESP-IDF version | Stop and activate/install v5.5.3 side by side. |
+| Wrong ESP-IDF version | Stop and activate/install v6.1 side by side. |
 | GitHub source or asset download is slow | Switch to the documented Espressif mainland China route. |
 | Submodule fetch times out or the shell reports an exceeded wait | Confirm `git status` first; if still fetching, rerun with a longer wait limit or in the background, then repair with `git submodule update --init --recursive`. |
 | Submodule fetch 404s or retries against a stale mirror | Inspect `git config --global --get-regexp 'url\..*jihulab'`; obtain user approval to clean residue before retrying. |
 | Component download is slow in China | Set `IDF_COMPONENT_STORAGE_URL` for the current terminal. |
 | Component download fails | Check network, proxy, DNS, and certificates; never disable TLS verification as a shortcut. |
 | Configuration misses tracked defaults | Preserve intentional settings, then rerun `idf.py set-target esp32c3`. |
-| Build came from another ESP-IDF | Activate v5.5.3, run `idf.py fullclean`, then `idf.py set-target esp32c3`. |
+| Build came from another ESP-IDF | Activate v6.1, run `idf.py fullclean`, then `idf.py set-target esp32c3`. |
 | Serial port is missing | Check cable, enumeration, host/VM USB forwarding, and power. |
 | Serial port is busy | Close WebSerial, VS Code monitor, `idf.py monitor`, and other serial clients. |
 | Permission denied on serial port | Add the user to the platform serial group and log in again. |

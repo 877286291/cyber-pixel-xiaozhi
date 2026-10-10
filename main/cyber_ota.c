@@ -64,8 +64,8 @@ static void log_heap(const char *stage)
 // 连续失败上限：到这里就报 ERROR 并停下，等下一次联网事件重新驱动。
 // 无限重试会让一块连不上服务端的设备在后台永久空转，白耗电。
 #define CYBER_OTA_MAX_FAILS    5
-// 已就绪后重新检查的间隔：token 可能轮换，但没必要频繁问。
-#define CYBER_OTA_READY_RECHECK_MS (30u * 60u * 1000u)
+// 说明：本模块【没有】周期性复查间隔。设备一旦拿到可用配置就停下，只在联网事件
+// （开机、断线重连）时重新取一次。理由与代价见 worker 里 READY/TEST_ONLY 分支。
 
 // ---------------------------------------------------------------------------
 // 发布通道：worker 写、任意任务读，一份小快照
@@ -103,6 +103,27 @@ static volatile bool s_net_seen;  // worker 是否已首次看到联网，用于
 void cyber_ota_notify_net(bool connected)
 {
     s_net_up = connected;
+}
+
+// 语音会话正在占用网络与堆内存时挂起检查。理由见头文件；这里同样是一字节写，
+// 无需锁。与 s_net_up 的区别是：defer 只影响"要不要发请求"，不影响状态发布。
+static volatile bool s_defer;
+
+void cyber_ota_set_defer(bool defer)
+{
+    s_defer = defer;
+}
+
+// 是否正握着一把 TLS。只在 352~447 行这段（do_check 里真正持有 HTTP 客户端的区间）
+// 为真，因此它是一个精确的"内存被占着"信号，而不是"这一轮检查还没做完"。
+//
+// cyber_ws 在建连前会等它落下：实测一次检查要 5~6 秒，如果用 while 把它当普通
+// 轮询用，就等于把 5% 的按键都变成"要多等 6 秒"。
+static volatile bool s_busy;
+
+bool cyber_ota_busy(void)
+{
+    return s_busy;
 }
 
 // ---------------------------------------------------------------------------
@@ -306,7 +327,7 @@ static cyber_ota_snapshot_t do_check(void)
         .board_type = CYBER_OTA_BOARD_TYPE,
         .app_name = CYBER_OTA_BOARD_TYPE,
         .app_version = CYBER_OTA_APP_VERSION,
-        .idf_version = "v5.5.3",   // 与 sdkconfig.defaults 声明的 IDF 版本一致
+        .idf_version = "v6.1",     // 与 idf_component.yml 的 idf 约束（>=6.0.1）一致
         .flash_size = flash_size,
         .min_free_heap = esp_get_minimum_free_heap_size(),
     };
@@ -341,6 +362,9 @@ static cyber_ota_snapshot_t do_check(void)
         return snap;
     }
     log_heap("ota pre-check");
+    // 从这里开始到 ota post-check 之间，本模块握着一把 TLS 连接及其全部缓冲。
+    // cyber_ws 靠这个标志避免同时再开一条（见 cyber_ota_busy）。
+    s_busy = true;
 
     esp_err_t err = ESP_OK;
     int status = 0;
@@ -435,6 +459,9 @@ static cyber_ota_snapshot_t do_check(void)
     } while (0);
 
     esp_http_client_cleanup(cli);
+    // 先清标志再记堆：这行日志是给"峰值之后还剩多少"用的，若标志还立着，
+    // 等待方会晚一拍才醒，而那一段空白已经毫无意义。
+    s_busy = false;
     log_heap("ota post-check");
     return snap;
 }
@@ -471,6 +498,14 @@ static void ota_worker(void *arg)
             publish(&checking);
         }
 
+        // 语音会话进行中：不发请求。一次 check 要开 TLS，实测与 WebSocket 会话
+        // 叠加时堆最低点只剩 32716 B；在对话中途触发会直接威胁音频缓冲。只是
+        // 延后，不改变任何状态。
+        if (s_defer) {
+            vTaskDelay(pdMS_TO_TICKS(500));
+            continue;
+        }
+
         cyber_ota_snapshot_t snap = do_check();
 
         if (snap.code[0] != '\0') {
@@ -487,26 +522,30 @@ static void ota_worker(void *arg)
             last_code[0] = '\0';
         }
 
-        if (snap.state == CYBER_OTA_STATE_READY) {
+        if (snap.state == CYBER_OTA_STATE_READY ||
+            snap.state == CYBER_OTA_STATE_TEST_ONLY) {
+            // 设备已经拿到可用配置：就此停下，不再做任何周期性复查。
+            //
+            // 这里原本有两条定时复查：READY 每 30 分钟（token 轮换 / 固件更新）、
+            // TEST_ONLY 每 60 秒（等 service 端把临时凭证换成正式凭证）。按产品
+            // 决定本固件不需要 OTA，于是它们被去掉——理由不只是"少发几个请求"：
+            //   1. WebSocket 会话已改为【常驻】以换取按键即时收音，任何周期性检查
+            //      都必然与它争同一块连续内存。实测 OTA TLS 与 WS 会话叠加时
+            //      largest 从 26624 掉到 22528，足以让 WebSocket 的 TLS 证书校验
+            //      失败（表现为"找不到可信根证书"，而不是"内存不足"，极易误判）。
+            //   2. 这些复查本身就是"OTA 功能"，而它已被明确排除在产品之外。
+            //
+            // 代价是明确的、且不会累积：运行期间若服务端解绑、或把临时凭证换成
+            // 正式凭证，设备要等到下一次联网事件或重启才会跟上。开机与每次重新
+            // 联网都会重新取一次配置（见上方循环开头），所以不会长期用着错凭证。
+            //
+            // 停在"等掉线"而不是停在固定时长，是为了让"重新联网"这一唯一的刷新
+            // 时机由网络事件本身驱动，而不是再引入一个计时器。
             publish(&snap);
-            // 已就绪：低频复查（token 可能轮换），期间仍然对掉线保持敏感。
-            const int steps = (int)(CYBER_OTA_READY_RECHECK_MS / 500u);
-            for (int i = 0; i < steps && s_net_up; i++) {
-                vTaskDelay(pdMS_TO_TICKS(500));
-            }
             poll_attempt = 0;
             fails = 0;
-            continue;
-        }
-
-        if (snap.state == CYBER_OTA_STATE_TEST_ONLY) {
-            // 绑定已生效，但服务端仍只给临时凭证（#1785）。设备可用，不需要用户
-            // 操作；比 READY 勤一点复查，是为了在服务端换成真凭证、或用户在控制台
-            // 解绑/换绑时尽快跟上。这【不是】网络失败，不计入失败次数。
-            publish(&snap);
-            fails = 0;
-            for (int i = 0; i < 120 && s_net_up; i++) {   // 60s
-                vTaskDelay(pdMS_TO_TICKS(500));
+            while (s_net_up) {
+                vTaskDelay(pdMS_TO_TICKS(1000));
             }
             continue;
         }
@@ -577,6 +616,19 @@ esp_err_t cyber_ota_get_ws_config(char *url, size_t url_cap,
     nvs_read_str(CYBER_OTA_KEY_WS_URL, url, url_cap);
     nvs_read_str(CYBER_OTA_KEY_WS_TOKEN, token, token_cap);
     return (url[0] != '\0') ? ESP_OK : ESP_ERR_NOT_FOUND;
+}
+
+bool cyber_ota_has_ws_config(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(CYBER_OTA_NVS_NS, NVS_READONLY, &h) != ESP_OK) return false;
+    // 先把长度问出来（out=NULL 只回填长度），再用它判断存在性。这样不必准备缓冲，
+    // 也就不会出现"缓冲太小 → NVS 拒绝 → 误判为没有"。
+    size_t len = 0;
+    const esp_err_t err = nvs_get_str(h, CYBER_OTA_KEY_WS_URL, NULL, &len);
+    nvs_close(h);
+    // len 含结尾 NUL：只剩 NUL 的空串不算有配置。
+    return err == ESP_OK && len > 1u;
 }
 
 esp_err_t cyber_ota_get_device_mac(char *out, size_t cap)

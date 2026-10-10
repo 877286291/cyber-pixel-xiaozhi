@@ -197,7 +197,8 @@ def main() -> int:
 
     try:
         flash_args = flash_args_path.read_text(encoding="utf-8")
-        if "--flash_size 8MB" not in flash_args:
+        # ESP-IDF 5.x 生成 "--flash_size 8MB"，6.x 起改用连字符 "--flash-size 8MB"。
+        if "--flash_size 8MB" not in flash_args and "--flash-size 8MB" not in flash_args:
             raise ValueError("flash_args does not select the required 8 MB flash size")
         image_offsets = parse_flash_args(flash_args)
         missing = [name for name in REQUIRED_IMAGES if name not in image_offsets]

@@ -9,7 +9,7 @@
 
 ## 确定性检查
 
-迭代时运行 `./tools/validate.sh --static`，交付前在 ESP-IDF 5.5.3 环境
+迭代时运行 `./tools/validate.sh --static`，交付前在 ESP-IDF 6.1 环境
 运行完整 `./tools/validate.sh`。除现有仓库／固件检查外，还会运行：
 
 - `tests/test_install_passport_skills.py`：相对发现链接、幂等、冲突、危险
