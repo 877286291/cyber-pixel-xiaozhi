@@ -4,14 +4,77 @@
 
 # 通过蓝牙配网连接 Wi-Fi
 
-当用户需要设备通过 Wi-Fi 连接网络时，可以参考
-[`demo/blufi-provisioning` 分支](https://github.com/FoloToy/ai-passport/tree/demo/blufi-provisioning)
-的代码实现蓝牙配网。手机通过 BLE 上的 BLUFI 协议发送 Wi-Fi 名称（SSID）和
-密码，设备以 Wi-Fi STA 模式连接网络并回报连接状态。蓝牙用于传递配网信息，
-不是承载应用的互联网流量。
+设备通过 BLE 上的 BLUFI 协议接收 Wi-Fi 名称（SSID）与口令，存进 NVS，随后以 STA
+模式连接。手机侧使用微信小程序 **蓝牙配网-FoloToy AI PASSPORT**。
 
-这是可选的应用参考。当前 `main` 的 Wi-Fi demo 仅扫描网络，并未实现联网或
-蓝牙配网；没有联网需求的应用不必启用网络功能。
+## 本应用的实现
+
+实现位于 `main/cyber_prov*.c`，与 `cyber_net` 的分工是硬边界：
+
+| 模块 | 职责 |
+| --- | --- |
+| `cyber_prov_util` | 纯逻辑：配网阶段推导、凭证累积与校验（宿主可测） |
+| `cyber_prov_security` | BLUFI 安全协商（PSA Crypto：FFDH + SHA-256 + AES-CTR） |
+| `cyber_prov` | BLE + BLUFI 协议；Wi-Fi 与凭证持久化全部委托给 `cyber_net` |
+| `cyber_net` | Wi-Fi 驱动与 NVS 凭证的唯一归属；新增 `cyber_net_prov_*` 供配网借用 |
+
+**Wi-Fi 驱动与默认 netif 在 ESP-IDF 里是全局单例**，所以配网不自建 Wi-Fi 栈，而是
+通过 `cyber_net_prov_begin/scan/commit/end` 借用它：`begin` 起栈并抑制自动重连，
+`scan` 借用同一套栈扫描 AP，`commit` 校验后写 NVS 并连接。
+
+### 入口与退出
+
+- **进入**：联网错误页（`CYBER_SCREEN_NET_ERROR`）短按 OK。该页在"无凭证"或
+  "连不上"时出现，正是需要配网的场景。
+- **退出**：配网页长按 OK；或**配网成功后自动退出**（连上热点即拆掉 BLE，见下）。
+
+### 关键约束与取舍
+
+- **BLE 只在配网期间存活。** `cyber_prov_stop()` 会完整拆除 NimBLE 并归还 RAM。
+  这是无 PSRAM 的 C3 上的必要取舍：常驻 BLE 会与 Wi-Fi 共存抢内存，而本应用同时
+  还要跑 Opus 编解码与 LVGL。
+- **加密方案必须跟随手机端，不能跟随示例。** 实测"蓝牙配网-FoloToy AI PASSPORT"
+  小程序用的是【经典 BLUFI 协议】：**1024 位自由 DH 参数 + MD5 派生 PSK +
+  AES-128-CFB128**（每包 IV = 全零、首字节替换为协议给的 iv8）。这与 ESP-IDF 6.1
+  自带示例的 RFC7919 3072 位 + SHA-256 + AES-CTR **线上不兼容**，两者只能二选一。
+  另外 IDF 6.1 的 mbedtls 4.x 已移除 `mbedtls_dhm/aes/md5` 的公开头文件，因此实现
+  改用：DH → `mbedtls_mpi`（`bignum.h` 是 wrapper，完整 API 可用，且走 RSA 硬件
+  加速）；MD5 / CFB → PSA。详见 `main/cyber_prov_security.c` 顶部说明。
+- **只用 STA**：设备不做 AP，BLUFI 的 AP 模式请求一律忽略。
+
+### 内存预算（本板无 PSRAM，这是配网能否跑起来的关键）
+
+BLE 协议栈初始化约需 **45 KB**，其中 NimBLE host 任务要一块 **4 KB 连续栈**。
+后者有个隐蔽陷阱：`esp_nimble_enable()` 创建该任务后**无条件返回 `ESP_OK`**，
+`xTaskCreatePinnedToCore` 失败会被静默吞掉——日志照常打印"配网已启动"，但主机
+从未运行、从不广播，表现为**手机搜不到设备**（实测 `largest` 仅 3072 < 4096 时
+正是如此）。因此起 BLE 前必须留足连续内存块。
+
+为此项目在**只减缓冲、不改功能**的前提下做了如下收窄，使 `audio ready` 阶段的
+`free/largest` 从 54588/45056 提升到 **63904/55296**（+9.3 KB / +10.2 KB）：
+
+| 位置 | 调整 | 备注 |
+| --- | --- | --- |
+| LVGL 显示缓冲 | 40 行 → 28 行 | `BSP_LVGL_DRAW_BUFFER_LINES`，省 5.8 KB |
+| I2S DMA 描述符 | 6 → 4 | 省约 3.8 KB |
+| WiFi 静态 RX 缓冲 | 10 → 4 | 每块约 1.6 KB，省约 9.6 KB |
+| WiFi 动态 RX/TX | 32/32 → 16/16 | |
+| LWIP TCP 收发缓冲 | 5760 → 2880 B | |
+| BT 控制器并发放射 | `BT_CTRL_BLE_MAX_ACT` 6 → 2 | 本应用只做单连接 |
+| NimBLE 内存池 | ACL/EVT/MSYS 按单连接规模收窄 | 都是**整块 calloc**，调太小反而更易失败 |
+| 硬件 AES | 关闭，改软件 AES | 硬件 DMA 路径要 16 B 对齐缓冲，配网时堆碎片化会分配失败 |
+
+调整这些值时**必须重新核对配网能启动**（看日志里 `启动 BLE 前` 与 `btc_init 前`
+两行的 `largest` 是否 ≥ 4096）。不要只看 `free`：配网要的是**连续块**，而 LVGL 的
+malloc 池（`CONFIG_LV_MEM_SIZE_KILOBYTES`）是静态数组，缩减它对配网毫无帮助。
+
+## 参考代码
+
+上游参考位于
+[`demo/blufi-provisioning` 分支](https://github.com/FoloToy/ai-passport/tree/demo/blufi-provisioning)，
+但**其 `demo_blufi_security.c` 无法在 IDF 6.1 下编译**（依赖已被移除的 mbedtls 头文件）。
+安全协商请以 IDF 6.1 自带示例
+（`$IDF_PATH/examples/bluetooth/blufi/main/blufi_security.c`）为准。
 
 <a id="mini-program-name"></a>
 
@@ -19,34 +82,24 @@
 
 配套小程序的准确名称为：**蓝牙配网-FoloToy AI PASSPORT**。
 
-向用户说明或搜索小程序时，请使用上述完整名称，不要自行翻译或改写。
-这是小程序名称，不是设备的蓝牙广播名；参考固件的广播名为
-`BLUFI_FoloPassport`。
+请使用上述完整名称，不要自行翻译或改写。这是小程序名称，不是设备的蓝牙广播名；
+本应用的广播名为 `BLUFI_FoloPassport`（`CYBER_PROV_DEVICE_NAME`）。小程序只列出以
+`BLUFI` 开头的设备，改广播名会导致手机扫不到。
 
-预期流程：设备进入配网状态，手机打开蓝牙并授予所需权限，打开该小程序，
-选择目标设备，提供 2.4 GHz Wi-Fi 的名称和密码。确认设备取得 IP 地址后，
-再验证应用实际需要的网络请求；仅蓝牙连接成功不能证明能够访问互联网。
-
-## 代码参考入口
-
-- [`main/demo_blufi.c`](https://github.com/FoloToy/ai-passport/blob/demo/blufi-provisioning/main/demo_blufi.c)：BLUFI 回调、Wi-Fi 扫描与连接、凭据处理、状态回报和生命周期。
-- [`main/demo_blufi_security.c`](https://github.com/FoloToy/ai-passport/blob/demo/blufi-provisioning/main/demo_blufi_security.c) 及其头文件：BLUFI 安全协商回调，提取示例时不要丢弃这些逻辑。
-- [`main/demo_radio.c`](https://github.com/FoloToy/ai-passport/blob/demo/blufi-provisioning/main/demo_radio.c)：NVS、`esp_netif` 和默认事件循环的共享初始化。
-- [`main/CMakeLists.txt`](https://github.com/FoloToy/ai-passport/blob/demo/blufi-provisioning/main/CMakeLists.txt) 和 [`sdkconfig.defaults`](https://github.com/FoloToy/ai-passport/blob/demo/blufi-provisioning/sdkconfig.defaults)：源文件注册、依赖、NimBLE/BLUFI 和加密配置。不能只复制单个 C 文件就认为完成接入。
+预期流程：设备进入配网状态，手机打开蓝牙并授予所需权限，打开该小程序，选择目标
+设备，提供 2.4 GHz Wi-Fi 的名称和密码。确认设备取得 IP 地址后，再验证应用实际需要
+的网络请求；仅蓝牙连接成功不能证明能够访问互联网。
 
 ## 接入与验收
 
-从应用当前基线出发，记录参考提交，仅移植适用的联网逻辑。不要直接合并整个
-demo，也不要用该分支的旧版 BSP、分区表或配置覆盖当前版本。重新实现应用
-自己的界面，将配网状态、任务及 Wi-Fi/BLE 服务放在应用层。
+从应用当前基线出发，仅移植适用的联网逻辑。不要直接合并整个 demo，也不要用该分支的
+旧版 BSP、分区表或配置覆盖当前版本。
 
-明确配网入口与退出、超时、重试上限、凭据持久化及主动清除凭据的方式。
-禁止记录或提交 Wi-Fi 密码。保留 LVGL 锁、非阻塞回调、任务与事件处理器清理
-机制，并评估 Wi-Fi、BLE 和 UI 同时运行的内部 RAM 占用。示例不等于完整的
-生产环境授权或安全设计。
+配网入口、退出、超时、重试上限、凭据持久化及主动清除凭据的方式已在上面说明；
+`cyber_net_clear_credentials()` 提供清除途径。禁止记录或提交 Wi-Fi 密码。
 
 运行[验证门禁](build-and-test.zh_CN.md)，再遵循
-[真机测试交接流程](../ai-guide.zh_CN.md#主动询问真机测试)。使用上述小程序
-验证：发现设备、成功配网、密码错误与网络不可用、重连与重启、清除凭据、
-反复进入退出配网，以及应用实际需要的网络请求。编译成功不能证明小程序
-兼容性或实机联网正常；未执行的检查列入 `Unverified`。
+[真机测试交接流程](../ai-guide.zh_CN.md#主动询问真机测试)。使用上述小程序验证：
+发现设备、成功配网、密码错误与网络不可用、重连与重启、清除凭据、反复进入退出配网，
+以及应用实际需要的网络请求。编译成功不能证明小程序兼容性或实机联网正常；
+未执行的检查列入 `Unverified`。
