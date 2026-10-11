@@ -61,23 +61,37 @@ the host never runs and never advertises, which shows up as **the phone not
 finding the device** (observed when `largest` was 3072 < 4096). A contiguous
 block must therefore be available before BLE starts.
 
-The project reclaims memory **without changing behavior and without touching the
-network buffers**. The mechanism is to **release the audio path during
-provisioning**: `cyber_audio_suspend()` stops the audio worker (28 KB stack) and
-calls `bsp_audio_deinit()` to free the I2S DMA (~11.5 KB); `cyber_audio_resume()`
-brings it back afterwards. Measured `largest` rises from 43008 to **69632**
-(+26.6 KB), leaving 38912 after `btc_init`.
+The project reclaims memory **without changing behavior**. The mechanisms are to
+**release the audio path during provisioning** — `cyber_audio_suspend()` stops the
+audio worker (28 KB stack) and calls `bsp_audio_deinit()` to free the I2S DMA
+(~11.5 KB); `cyber_audio_resume()` brings it back afterwards, so `largest` rises
+from 43008 to **69632** (+26.6 KB), leaving 38912 after `btc_init` — and to trim
+the Wi-Fi **receive** side (see below). The `BSP_LVGL_DRAW_BUFFER_LINES` change
+(40 → 28 lines, 5.8 KB) is kept as well: it has independent value.
 
-The `BSP_LVGL_DRAW_BUFFER_LINES` change (40 → 28 lines, 5.8 KB) is kept: it has
-independent value.
+**Shrink only the Wi-Fi *receive*-side buffers; never the transmit side.** This
+distinction is empirical and getting it wrong breaks voice:
 
-**Do not shrink the Wi-Fi/TLS buffers to make room.** Trimming
-`ESP_WIFI_DYNAMIC_RX/TX_BUFFER_NUM` to 16, `ESP_WIFI_STATIC_RX_BUFFER_NUM` to 4,
-and the LWIP TCP send/window buffers to 2880 B **broke voice**: the measured
-uplink drop rate went from 4% to 83% and no downlink frames arrived (a smaller
-TCP send buffer makes each Opus frame block longer, and the 4-deep uplink queue
-overflows, so the server hangs up). Those buffers are a hard requirement of the
-voice path.
+- Shrinking the **transmit** side (`ESP_WIFI_DYNAMIC_TX_BUFFER_NUM` 32→16, LWIP TCP
+  send buffer 5760→2880 B) makes each Opus frame block longer while sending; the
+  4-deep uplink queue then overflows and the server hangs up. Measured: the uplink
+  drop rate went from 4% to 83% and no downlink frames arrived.
+- Shrinking the **receive** side (`ESP_WIFI_STATIC_RX_BUFFER_NUM` 10→4,
+  `ESP_WIFI_DYNAMIC_RX_BUFFER_NUM` 32→16) is safe, and it saves memory at Wi-Fi
+  init time while the heap is still clean, which helps later contiguous allocations
+  the most.
+
+Why this matters: with BLE enabled the heap is tighter, and the **Opus codecs each
+need about 20 KB of contiguous memory** (see `cyber_audio.c`). The receive-side trim
+raises the largest free block at the `audio ready` stage from 40960 to **53248**
+(+12.3 KB), still 49152 after `btc_init`. Without it, only about 12.8 KB is left at
+capture time, the encoder cannot open, no audio is captured, the server never
+replies, and the UI **sticks on "thinking"** — that is the real cause of the stuck
+thinking symptom, and it is not protocol related.
+
+**Keep the transmit side at the IDF defaults**: do not change
+`CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM`, `CONFIG_LWIP_TCP_SND_BUF_DEFAULT`, or
+`CONFIG_LWIP_TCP_WND_DEFAULT`.
 
 After changing any memory item, **re-verify that provisioning starts** (the
 `largest` in the two heap lines around `btc_init` in `cyber_prov.c` must be at

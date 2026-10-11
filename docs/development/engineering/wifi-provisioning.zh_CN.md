@@ -50,18 +50,30 @@ BLE 协议栈初始化约需 **45 KB**，其中 NimBLE host 任务要一块 **4 
 从未运行、从不广播，表现为**手机搜不到设备**（实测 `largest` 仅 3072 < 4096 时
 正是如此）。因此起 BLE 前必须留足连续内存块。
 
-为此项目在**不改功能、不动网络缓冲**的前提下回收内存。做法是**配网期间释放音频
-通路**：`cyber_audio_suspend()` 会停掉音频 worker（栈 28 KB）并调用
-`bsp_audio_deinit()` 释放 I2S DMA（约 11.5 KB），配网结束再 `cyber_audio_resume()`
-恢复。实测 `largest` 从 43008 提升到 **69632**（+26.6 KB），`btc_init` 后仍有 38912。
+为此项目在**不改功能**的前提下回收内存，有两个手段：**配网期间释放音频通路**
+（`cyber_audio_suspend()` 停掉音频 worker（栈 28 KB）并调 `bsp_audio_deinit()` 释放
+I2S DMA（约 11.5 KB），配网结束再 `cyber_audio_resume()` 恢复，实测 `largest` 由
+43008 提升到 **69632**，`btc_init` 后仍有 38912），以及**收窄 Wi-Fi 接收侧缓冲**
+（见下）。`BSP_LVGL_DRAW_BUFFER_LINES` 40 → 28 行（省 5.8 KB）同样保留。
 
-配套的 `BSP_LVGL_DRAW_BUFFER_LINES` 40 → 28 行（省 5.8 KB）保留，它有独立收益。
+**只收窄 Wi-Fi 的【接收侧】缓冲，绝不碰发送侧。** 这一区分是实测得来的，写错会
+破坏语音：
 
-**不要削减 Wi-Fi/TLS 缓冲来腾内存。** 曾把 `ESP_WIFI_DYNAMIC_RX/TX_BUFFER_NUM`
-收到 16、`ESP_WIFI_STATIC_RX_BUFFER_NUM` 收到 4、LWIP TCP 收发缓冲收到 2880B，
-结果**破坏了语音**：实测上行丢帧率从 4% 升到 83%、下行收不到任何帧（收窄 TCP 发送
-缓冲后每帧 Opus 的发送阻塞更久，而上行队列只有 4 帧深 → 队列溢出 → 服务端挂断）。
-这些缓冲是语音链路的硬需求。
+- 收窄**发送侧**（`ESP_WIFI_DYNAMIC_TX_BUFFER_NUM` 32→16、LWIP TCP 发送缓冲
+  5760→2880 B）会让每帧 Opus 的发送阻塞更久；上行队列只有 4 帧深，于是队列溢出、
+  服务端收不到完整语音并挂断。实测上行丢帧率由 4% 升到 83%、下行收不到任何帧。
+- 收窄**接收侧**（`ESP_WIFI_STATIC_RX_BUFFER_NUM` 10→4、
+  `ESP_WIFI_DYNAMIC_RX_BUFFER_NUM` 32→16）是安全的，且在 Wi-Fi init 时（堆还很整、
+  尚未碎片化）就少占内存，对后续的连续分配帮助最大。
+
+为什么这关系重大：BLE 使能后堆更紧，**Opus 编解码器各需约 20 KB 连续内存**
+（见 `cyber_audio.c`）。接收侧削减实测让 `audio ready` 的最大连续块从 40960 提升到
+**53248**（+12.3 KB），`btc_init` 后仍有 49152；若不做这一步，抓音时只剩约 12.8 KB，
+编码器打不开 → 采不到音 → 服务端不回复 → 界面**卡在"思考"**（这就是"卡 thinking"
+的真实原因，与协议无关）。
+
+**发送侧一律保持 IDF 默认**：`CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM`、
+`CONFIG_LWIP_TCP_SND_BUF_DEFAULT`、`CONFIG_LWIP_TCP_WND_DEFAULT` 不要动。
 
 调整任何内存项后**必须重新核对配网能启动**（`cyber_prov.c` 里 `btc_init` 前后的
 两行堆日志中 `largest` 需 ≥ 4096）。不要只看 `free`：配网要的是**连续块**，而
